@@ -1,0 +1,22 @@
+# Node
+node_modules/
+dist/
+
+# Tauri / Rust
+src-tauri/target/
+
+# Banco de dados local
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# VSCode
+.vscode/settings.json
+.vscode/launch.json
