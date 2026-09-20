@@ -27,7 +27,7 @@ async function sair() {
       @periodo:conciliar="() => {}"
       @comprovantes:inbox="() => {}"
       @comprovantes:disponiveis="() => {}"
-      @cadastros:pessoas="() => {}"
+      @cadastros:pessoas="router.push('/cadastros/pessoas')"
       @cadastros:contas="() => {}"
       @cadastros:categorias="router.push('/cadastros/categorias')"
       @relatorios:prestacao="() => {}"

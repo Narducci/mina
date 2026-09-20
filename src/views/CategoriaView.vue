@@ -45,40 +45,19 @@ onMounted(carregar);
 
 // ── Grid ──────────────────────────────────────────────────────────────────
 const colunas = ref([
-  {
-    field: "nome",
-    headerName: "Nome",
-    flex: 2,
-    cellStyle: { display: "flex", alignItems: "center" },
-  },
-  {
-    field: "tipo",
-    headerName: "Tipo",
-    flex: 1,
-    cellStyle: { display: "flex", alignItems: "center" },
-  },
-  {
-    field: "disponivel_em",
-    headerName: "Disponível em",
-    flex: 1,
-    cellStyle: { display: "flex", alignItems: "center" },
-  },
+  { field: "nome",               headerName: "Nome",          flex: 2 },
+  { field: "tipo",               headerName: "Tipo",          flex: 1 },
+  { field: "disponivel_em",      headerName: "Disponível em", flex: 1 },
   {
     field: "comprovante_esperado",
     headerName: "Comprovante",
     flex: 1,
-    cellStyle: { display: "flex", alignItems: "center" },
     valueFormatter: (p) => (p.value ? "Sim" : "Não"),
   },
   {
     headerName: "",
     width: 48,
     sortable: false,
-    cellStyle: {
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-    },
     cellRenderer: () => {
       const btn = document.createElement("button");
       btn.innerHTML =
@@ -93,7 +72,6 @@ const colunas = ref([
 const gridOptions = {
   rowHeight: 34,
   headerHeight: 36,
-  rowSelection: "single",
   onRowDoubleClicked: (e) => abrirEdicao(e.data),
 };
 
@@ -111,24 +89,18 @@ const form = reactive({
 
 const opTipo = [
   { value: "entrada", label: "Entrada" },
-  { value: "saida", label: "Saída" },
-  { value: "neutro", label: "Neutro" },
+  { value: "saida",   label: "Saída"   },
+  { value: "neutro",  label: "Neutro"  },
 ];
 
 const opDisponivelEm = [
-  { value: "direto", label: "Direto" },
+  { value: "direto",   label: "Direto"   },
   { value: "indireto", label: "Indireto" },
-  { value: "ambos", label: "Ambos" },
+  { value: "ambos",    label: "Ambos"    },
 ];
 
 function abrirNovo() {
-  Object.assign(form, {
-    id: null,
-    nome: "",
-    tipo: "",
-    disponivel_em: "",
-    comprovante_esperado: true,
-  });
+  Object.assign(form, { id: null, nome: "", tipo: "", disponivel_em: "", comprovante_esperado: true });
   modoEdicao.value = false;
   modalAberto.value = true;
 }
@@ -154,23 +126,12 @@ async function salvar() {
   if (modoEdicao.value) {
     await d.execute(
       `UPDATE categoria SET nome=?, tipo=?, disponivel_em=?, comprovante_esperado=? WHERE id=?`,
-      [
-        form.nome,
-        form.tipo,
-        form.disponivel_em,
-        form.comprovante_esperado ? 1 : 0,
-        form.id,
-      ],
+      [form.nome, form.tipo, form.disponivel_em, form.comprovante_esperado ? 1 : 0, form.id],
     );
   } else {
     await d.execute(
       `INSERT INTO categoria (nome, tipo, disponivel_em, comprovante_esperado) VALUES (?,?,?,?)`,
-      [
-        form.nome,
-        form.tipo,
-        form.disponivel_em,
-        form.comprovante_esperado ? 1 : 0,
-      ],
+      [form.nome, form.tipo, form.disponivel_em, form.comprovante_esperado ? 1 : 0],
     );
   }
   fecharModal();
@@ -245,9 +206,7 @@ function trapFoco(e) {
         </div>
 
         <div class="modal-footer">
-          <button v-if="modoEdicao" class="btn-excluir" @click="excluir">
-            Excluir
-          </button>
+          <button v-if="modoEdicao" class="btn-excluir" @click="excluir">Excluir</button>
           <button class="btn-cancelar" @click="fecharModal">Cancelar</button>
           <button class="btn-salvar" @click="salvar">Salvar</button>
         </div>
@@ -303,9 +262,7 @@ function trapFoco(e) {
   font-family: inherit;
   cursor: pointer;
 }
-.btn-novo:hover {
-  opacity: 0.85;
-}
+.btn-novo:hover { opacity: 0.85; }
 
 .modal-overlay {
   position: fixed;

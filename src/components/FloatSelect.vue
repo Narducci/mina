@@ -47,10 +47,10 @@ onUnmounted(() => document.removeEventListener('click', handleClickFora))
       @keydown.space.prevent="toggle"
       @keydown.escape="aberto = false"
     >
+      <label class="select-label" :class="{ active: aberto || modelValue }">{{ label }}</label>
       <span class="select-value">{{ labelSelecionado }}</span>
       <ChevronDown class="select-arrow" :class="{ rotated: aberto }" />
     </div>
-    <label class="select-label" :class="{ active: aberto || modelValue }">{{ label }}</label>
 
     <ul v-if="aberto" class="select-dropdown">
       <li
@@ -72,44 +72,24 @@ onUnmounted(() => document.removeEventListener('click', handleClickFora))
 }
 
 .select-box {
+  position: relative;
   width: 100%;
-  padding: 22px 12px 8px 12px;
+  padding: 20px 36px 6px 12px;
   background-color: var(--cor-input-bg);
   border: 1px solid var(--cor-borda);
   border-radius: 4px;
   cursor: pointer;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-end;
   min-height: 48px;
+  box-sizing: border-box;
   transition: border-color 0.2s;
   outline: none;
 }
 
-.select-box:focus {
-  border-color: #4a9eff;
-}
-
+.select-box:focus,
 .select-box.open {
   border-color: #4a9eff;
-  border-radius: 4px 4px 0 0;
-}
-
-.select-value {
-  font-size: 13px;
-  color: var(--cor-texto-forte);
-}
-
-.select-arrow {
-  width: 16px;
-  height: 16px;
-  color: var(--cor-texto-fraco);
-  transition: transform 0.2s;
-  flex-shrink: 0;
-}
-
-.select-arrow.rotated {
-  transform: rotate(180deg);
 }
 
 .select-label {
@@ -120,7 +100,8 @@ onUnmounted(() => document.removeEventListener('click', handleClickFora))
   font-size: 13px;
   color: var(--cor-texto-fraco);
   pointer-events: none;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
+  line-height: 1;
 }
 
 .select-label.active {
@@ -130,26 +111,50 @@ onUnmounted(() => document.removeEventListener('click', handleClickFora))
   color: #4a9eff;
 }
 
+.select-value {
+  font-size: 13px;
+  color: var(--cor-texto-forte);
+  line-height: 1;
+}
+
+.select-arrow {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  color: var(--cor-texto-fraco);
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.select-arrow.rotated {
+  transform: translateY(-50%) rotate(180deg);
+}
+
 .select-dropdown {
   position: absolute;
-  top: 100%;
+  top: calc(100% + 2px);
   left: 0;
   right: 0;
   background-color: var(--cor-input-bg);
-  border: 1px solid #4a9eff;
-  border-top: none;
-  border-radius: 0 0 4px 4px;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
   list-style: none;
+  margin: 0;
+  padding: 4px 0;
   z-index: 9999;
   max-height: 200px;
   overflow-y: auto;
 }
 
 .select-dropdown li {
-  padding: 9px 12px;
+  padding: 8px 12px;
   font-size: 13px;
   color: var(--cor-texto);
   cursor: pointer;
+  transition: background-color 0.1s;
 }
 
 .select-dropdown li:hover {

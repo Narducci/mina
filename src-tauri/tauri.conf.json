@@ -14,7 +14,8 @@
       {
         "title": "mina",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "backgroundColor": "#181818"
       }
     ],
     "security": {
