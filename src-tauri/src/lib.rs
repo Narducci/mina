@@ -14,6 +14,12 @@ pub fn run() {
             sql: include_str!("../schema.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 2,
+            description: "conta_ativa_default_0_lancamento_conta_id",
+            sql: include_str!("../schema_v2.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

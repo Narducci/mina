@@ -16,6 +16,16 @@ const routes = [
     name: 'pessoas',
     component: () => import('../views/PessoaView.vue'),
   },
+  {
+    path: '/cadastros/contas',
+    name: 'contas',
+    component: () => import('../views/ContaView.vue'),
+  },
+  {
+    path: '/cadastros/ativar-conta',
+    name: 'ativar-conta',
+    component: () => import('../views/AtivarContaView.vue'),
+  },
 ]
 
 const router = createRouter({

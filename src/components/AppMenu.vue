@@ -51,6 +51,7 @@ const emit = defineEmits([
   'cadastros:pessoas',
   'cadastros:contas',
   'cadastros:categorias',
+  'cadastros:ativar-conta',
   'relatorios:prestacao',
   'configuracoes:geral',
   'configuracoes:pastas',
@@ -149,6 +150,10 @@ function handleHotkey(e) {
         </a>
         <a href="#" @click.prevent="emit('cadastros:categorias'); fechar()">
           <Tag class="icone" /><span>Categorias</span>
+        </a>
+        <hr />
+        <a href="#" @click.prevent="emit('cadastros:ativar-conta'); fechar()">
+          <CheckCircle class="icone" /><span>Ativar Conta</span>
         </a>
       </div>
     </div>

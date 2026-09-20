@@ -6,8 +6,14 @@ This template should help get you started developing with Tauri + Vue 3 in Vite.
 
 - [VS Code](https://code.visualstudio.com/) + [Vue - Official](https://marketplace.visualstudio.com/items?itemName=Vue.volar) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
 
-CPF:
-352.346.870-19
-417.892.370-64
-298.571.430-82
-104.827.530-44
+CPFs válidos de exemplo
+111.444.777-35
+123.456.789-09
+489.930.068-90
+834.972.199-59
+164.056.076-90
+365.061.901-67
+875.245.863-61
+095.324.046-00
+505.001.653-35
+499.391.965-47
