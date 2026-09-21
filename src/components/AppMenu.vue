@@ -1,158 +1,321 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from "vue";
 import {
-  FolderOpen, Save, RotateCcw, LogOut,
-  CalendarPlus, ArrowDownUp, ArrowLeftRight, CheckSquare,
-  Inbox, CheckCircle,
-  Users, Landmark, Tag,
+  FolderOpen,
+  Save,
+  RotateCcw,
+  LogOut,
+  CalendarPlus,
+  ArrowDownUp,
+  ArrowLeftRight,
+  CheckSquare,
+  Inbox,
+  CheckCircle,
+  Users,
+  Landmark,
+  Tag,
   FileText,
-  Settings, FolderCog
-} from '@lucide/vue'
+  Settings,
+  FolderCog,
+} from "@lucide/vue";
 
-const aberto = ref(null)
+const aberto = ref(null);
 
 function alternar(menu) {
-  aberto.value = aberto.value === menu ? null : menu
+  aberto.value = aberto.value === menu ? null : menu;
 }
 
 function hover(menu) {
-  if (aberto.value !== null) aberto.value = menu
+  if (aberto.value !== null) aberto.value = menu;
 }
 
 function fechar() {
-  aberto.value = null
+  aberto.value = null;
 }
 
 function handleClickFora(e) {
-  if (!e.target.closest('.menu-item')) fechar()
+  if (!e.target.closest(".menu-item")) fechar();
 }
 
 onMounted(() => {
-  document.addEventListener('click', handleClickFora)
-  document.addEventListener('keydown', handleHotkey)
-})
+  document.addEventListener("click", handleClickFora);
+  document.addEventListener("keydown", handleHotkey);
+});
 
 onUnmounted(() => {
-  document.removeEventListener('click', handleClickFora)
-  document.removeEventListener('keydown', handleHotkey)
-})
+  document.removeEventListener("click", handleClickFora);
+  document.removeEventListener("keydown", handleHotkey);
+});
 
 const emit = defineEmits([
-  'arquivo:importar',
-  'arquivo:backup',
-  'arquivo:restaurar',
-  'arquivo:sair',
-  'periodo:novo',
-  'periodo:diretos',
-  'periodo:indiretos',
-  'periodo:conciliar',
-  'comprovantes:inbox',
-  'comprovantes:disponiveis',
-  'cadastros:pessoas',
-  'cadastros:contas',
-  'cadastros:categorias',
-  'cadastros:ativar-conta',
-  'relatorios:prestacao',
-  'configuracoes:geral',
-  'configuracoes:pastas',
-])
+  "arquivo:importar",
+  "arquivo:backup",
+  "arquivo:restaurar",
+  "arquivo:sair",
+  "periodo:novo",
+  "periodo:diretos",
+  "periodo:indiretos",
+  "periodo:conciliar",
+  "comprovantes:inbox",
+  "comprovantes:disponiveis",
+  "cadastros:pessoas",
+  "cadastros:contas",
+  "cadastros:categorias",
+  "cadastros:ativar-conta",
+  "relatorios:prestacao",
+  "configuracoes:geral",
+  "configuracoes:pastas",
+]);
 
 function handleHotkey(e) {
-  const ctrl = e.ctrlKey
-  const alt  = e.altKey
-  const key  = e.key.toLowerCase()
+  const ctrl = e.ctrlKey;
+  const alt = e.altKey;
+  const key = e.key.toLowerCase();
 
-  if (ctrl && key === 'o')  { e.preventDefault(); emit('arquivo:importar') }
-  if (ctrl && key === 'b')  { e.preventDefault(); emit('arquivo:backup') }
-  if (ctrl && key === 'r')  { e.preventDefault(); emit('arquivo:restaurar') }
-  if (alt  && key === 'f4') { e.preventDefault(); emit('arquivo:sair') }
+  if (ctrl && key === "o") {
+    e.preventDefault();
+    emit("arquivo:importar");
+  }
+  if (ctrl && key === "b") {
+    e.preventDefault();
+    emit("arquivo:backup");
+  }
+  if (ctrl && key === "r") {
+    e.preventDefault();
+    emit("arquivo:restaurar");
+  }
+  if (alt && key === "f4") {
+    e.preventDefault();
+    emit("arquivo:sair");
+  }
 
-  if (ctrl && key === 'n')  { e.preventDefault(); emit('periodo:novo') }
-  if (ctrl && key === 'd')  { e.preventDefault(); emit('periodo:diretos') }
-  if (ctrl && key === 'i')  { e.preventDefault(); emit('periodo:indiretos') }
-  if (ctrl && key === 'k')  { e.preventDefault(); emit('periodo:conciliar') }
+  if (ctrl && key === "n") {
+    e.preventDefault();
+    emit("periodo:novo");
+  }
+  if (ctrl && key === "d") {
+    e.preventDefault();
+    emit("periodo:diretos");
+  }
+  if (ctrl && key === "i") {
+    e.preventDefault();
+    emit("periodo:indiretos");
+  }
+  if (ctrl && key === "k") {
+    e.preventDefault();
+    emit("periodo:conciliar");
+  }
 
-  if (ctrl && key === '1')  { e.preventDefault(); emit('comprovantes:inbox') }
-  if (ctrl && key === '2')  { e.preventDefault(); emit('comprovantes:disponiveis') }
+  if (ctrl && key === "1") {
+    e.preventDefault();
+    emit("comprovantes:inbox");
+  }
+  if (ctrl && key === "2") {
+    e.preventDefault();
+    emit("comprovantes:disponiveis");
+  }
 
-  if (ctrl && key === 'p')  { e.preventDefault(); emit('relatorios:prestacao') }
-  if (ctrl && key === ',')  { e.preventDefault(); emit('configuracoes:geral') }
+  if (ctrl && key === "p") {
+    e.preventDefault();
+    emit("relatorios:prestacao");
+  }
+  if (ctrl && key === ",") {
+    e.preventDefault();
+    emit("configuracoes:geral");
+  }
 }
 </script>
 
 <template>
   <nav class="top-menu">
-
     <!-- Arquivo -->
     <div class="menu-item" :class="{ open: aberto === 'arquivo' }">
-      <button class="menu-label" @click="alternar('arquivo')" @mouseenter="hover('arquivo')">Arquivo</button>
+      <button
+        class="menu-label"
+        @click="alternar('arquivo')"
+        @mouseenter="hover('arquivo')"
+      >
+        Arquivo
+      </button>
       <div class="dropdown">
-        <a href="#" @click.prevent="emit('arquivo:importar'); fechar()">
-          <FolderOpen class="icone" /><span>Importar Comprovante</span><span class="hotkey">Ctrl+O</span>
+        <a
+          href="#"
+          @click.prevent="
+            emit('arquivo:importar');
+            fechar();
+          "
+        >
+          <FolderOpen class="icone" /><span>Importar Comprovante</span
+          ><span class="hotkey">Ctrl+O</span>
         </a>
         <hr />
-        <a href="#" @click.prevent="emit('arquivo:backup'); fechar()">
-          <Save class="icone" /><span>Backup</span><span class="hotkey">Ctrl+B</span>
+        <a
+          href="#"
+          @click.prevent="
+            emit('arquivo:backup');
+            fechar();
+          "
+        >
+          <Save class="icone" /><span>Backup</span
+          ><span class="hotkey">Ctrl+B</span>
         </a>
-        <a href="#" @click.prevent="emit('arquivo:restaurar'); fechar()">
-          <RotateCcw class="icone" /><span>Restaurar</span><span class="hotkey">Ctrl+R</span>
+        <a
+          href="#"
+          @click.prevent="
+            emit('arquivo:restaurar');
+            fechar();
+          "
+        >
+          <RotateCcw class="icone" /><span>Restaurar</span
+          ><span class="hotkey">Ctrl+R</span>
         </a>
         <hr />
-        <a href="#" @click.prevent="emit('arquivo:sair'); fechar()">
-          <LogOut class="icone" /><span>Sair</span><span class="hotkey">Alt+F4</span>
+        <a
+          href="#"
+          @click.prevent="
+            emit('arquivo:sair');
+            fechar();
+          "
+        >
+          <LogOut class="icone" /><span>Sair</span
+          ><span class="hotkey">Alt+F4</span>
         </a>
       </div>
     </div>
 
     <!-- Período -->
     <div class="menu-item" :class="{ open: aberto === 'periodo' }">
-      <button class="menu-label" @click="alternar('periodo')" @mouseenter="hover('periodo')">Período</button>
+      <button
+        class="menu-label"
+        @click="alternar('periodo')"
+        @mouseenter="hover('periodo')"
+      >
+        Lançamento
+      </button>
       <div class="dropdown">
-        <a href="#" @click.prevent="emit('periodo:novo'); fechar()">
-          <CalendarPlus class="icone" /><span>Novo Período</span><span class="hotkey">Ctrl+N</span>
+        <a
+          href="#"
+          @click.prevent="
+            emit('periodo:novo');
+            fechar();
+          "
+        >
+          <CalendarPlus class="icone" /><span>Novo Período</span
+          ><span class="hotkey">Ctrl+N</span>
         </a>
         <hr />
-        <a href="#" @click.prevent="emit('periodo:diretos'); fechar()">
-          <ArrowDownUp class="icone" /><span>Lançamentos Diretos</span><span class="hotkey">Ctrl+D</span>
+        <a
+          href="#"
+          @click.prevent="
+            emit('periodo:diretos');
+            fechar();
+          "
+        >
+          <ArrowDownUp class="icone" /><span>Lançamentos Diretos</span
+          ><span class="hotkey">Ctrl+D</span>
         </a>
-        <a href="#" @click.prevent="emit('periodo:indiretos'); fechar()">
-          <ArrowLeftRight class="icone" /><span>Lançamentos Indiretos</span><span class="hotkey">Ctrl+I</span>
+        <a
+          href="#"
+          @click.prevent="
+            emit('periodo:indiretos');
+            fechar();
+          "
+        >
+          <ArrowLeftRight class="icone" /><span>Lançamentos Indiretos</span
+          ><span class="hotkey">Ctrl+I</span>
         </a>
         <hr />
-        <a href="#" @click.prevent="emit('periodo:conciliar'); fechar()">
-          <CheckSquare class="icone" /><span>Conciliar</span><span class="hotkey">Ctrl+K</span>
+        <a
+          href="#"
+          @click.prevent="
+            emit('periodo:conciliar');
+            fechar();
+          "
+        >
+          <CheckSquare class="icone" /><span>Conciliar</span
+          ><span class="hotkey">Ctrl+K</span>
         </a>
       </div>
     </div>
 
     <!-- Comprovantes -->
     <div class="menu-item" :class="{ open: aberto === 'comprovantes' }">
-      <button class="menu-label" @click="alternar('comprovantes')" @mouseenter="hover('comprovantes')">Comprovantes</button>
+      <button
+        class="menu-label"
+        @click="alternar('comprovantes')"
+        @mouseenter="hover('comprovantes')"
+      >
+        Comprovantes
+      </button>
       <div class="dropdown">
-        <a href="#" @click.prevent="emit('comprovantes:inbox'); fechar()">
-          <Inbox class="icone" /><span>Inbox</span><span class="hotkey">Ctrl+1</span>
+        <a
+          href="#"
+          @click.prevent="
+            emit('comprovantes:inbox');
+            fechar();
+          "
+        >
+          <Inbox class="icone" /><span>Inbox</span
+          ><span class="hotkey">Ctrl+1</span>
         </a>
-        <a href="#" @click.prevent="emit('comprovantes:disponiveis'); fechar()">
-          <CheckCircle class="icone" /><span>Disponíveis</span><span class="hotkey">Ctrl+2</span>
+        <a
+          href="#"
+          @click.prevent="
+            emit('comprovantes:disponiveis');
+            fechar();
+          "
+        >
+          <CheckCircle class="icone" /><span>Disponíveis</span
+          ><span class="hotkey">Ctrl+2</span>
         </a>
       </div>
     </div>
 
     <!-- Cadastros -->
     <div class="menu-item" :class="{ open: aberto === 'cadastros' }">
-      <button class="menu-label" @click="alternar('cadastros')" @mouseenter="hover('cadastros')">Cadastros</button>
+      <button
+        class="menu-label"
+        @click="alternar('cadastros')"
+        @mouseenter="hover('cadastros')"
+      >
+        Cadastros
+      </button>
       <div class="dropdown">
-        <a href="#" @click.prevent="emit('cadastros:pessoas'); fechar()">
+        <a
+          href="#"
+          @click.prevent="
+            emit('cadastros:pessoas');
+            fechar();
+          "
+        >
           <Users class="icone" /><span>Pessoas</span>
         </a>
-        <a href="#" @click.prevent="emit('cadastros:contas'); fechar()">
+        <a
+          href="#"
+          @click.prevent="
+            emit('cadastros:contas');
+            fechar();
+          "
+        >
           <Landmark class="icone" /><span>Contas</span>
         </a>
-        <a href="#" @click.prevent="emit('cadastros:categorias'); fechar()">
+        <a
+          href="#"
+          @click.prevent="
+            emit('cadastros:categorias');
+            fechar();
+          "
+        >
           <Tag class="icone" /><span>Categorias</span>
         </a>
         <hr />
-        <a href="#" @click.prevent="emit('cadastros:ativar-conta'); fechar()">
+        <a
+          href="#"
+          @click.prevent="
+            emit('cadastros:ativar-conta');
+            fechar();
+          "
+        >
           <CheckCircle class="icone" /><span>Ativar Conta</span>
         </a>
       </div>
@@ -160,27 +323,58 @@ function handleHotkey(e) {
 
     <!-- Relatórios -->
     <div class="menu-item" :class="{ open: aberto === 'relatorios' }">
-      <button class="menu-label" @click="alternar('relatorios')" @mouseenter="hover('relatorios')">Relatórios</button>
+      <button
+        class="menu-label"
+        @click="alternar('relatorios')"
+        @mouseenter="hover('relatorios')"
+      >
+        Relatórios
+      </button>
       <div class="dropdown">
-        <a href="#" @click.prevent="emit('relatorios:prestacao'); fechar()">
-          <FileText class="icone" /><span>Prestação de Contas</span><span class="hotkey">Ctrl+P</span>
+        <a
+          href="#"
+          @click.prevent="
+            emit('relatorios:prestacao');
+            fechar();
+          "
+        >
+          <FileText class="icone" /><span>Prestação de Contas</span
+          ><span class="hotkey">Ctrl+P</span>
         </a>
       </div>
     </div>
 
     <!-- Configurações -->
     <div class="menu-item" :class="{ open: aberto === 'configuracoes' }">
-      <button class="menu-label" @click="alternar('configuracoes')" @mouseenter="hover('configuracoes')">Configurações</button>
+      <button
+        class="menu-label"
+        @click="alternar('configuracoes')"
+        @mouseenter="hover('configuracoes')"
+      >
+        Configurações
+      </button>
       <div class="dropdown">
-        <a href="#" @click.prevent="emit('configuracoes:geral'); fechar()">
-          <Settings class="icone" /><span>Geral</span><span class="hotkey">Ctrl+,</span>
+        <a
+          href="#"
+          @click.prevent="
+            emit('configuracoes:geral');
+            fechar();
+          "
+        >
+          <Settings class="icone" /><span>Geral</span
+          ><span class="hotkey">Ctrl+,</span>
         </a>
-        <a href="#" @click.prevent="emit('configuracoes:pastas'); fechar()">
+        <a
+          href="#"
+          @click.prevent="
+            emit('configuracoes:pastas');
+            fechar();
+          "
+        >
           <FolderCog class="icone" /><span>Pastas</span>
         </a>
       </div>
     </div>
-
   </nav>
 </template>
 

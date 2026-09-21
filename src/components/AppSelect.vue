@@ -1,28 +1,81 @@
 <script setup>
-defineProps({
-  label: { type: String, required: true },
-  modelValue: { type: String, default: '' },
-  options: { type: Array, required: true }, // [{ value, label }]
-  required: { type: Boolean, default: false },
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ChevronDown } from '@lucide/vue'
+
+const props = defineProps({
+  label:        { type: String, required: true },
+  modelValue:   { type: String, default: '' },
+  options:      { type: Array,  required: true }, // [{ value, label }]
+  placeholder:  { type: String, default: '' },
 })
-defineEmits(['update:modelValue'])
+
+const emit = defineEmits(['update:modelValue'])
+
+const aberto     = ref(false)
+const containerRef = ref(null)
+
+const labelSelecionado = computed(() => {
+  const op = props.options.find(o => o.value === props.modelValue)
+  return op ? op.label : ''
+})
+
+function selecionar(value) {
+  emit('update:modelValue', value)
+  aberto.value = false
+}
+
+function toggle() {
+  aberto.value = !aberto.value
+}
+
+function handleClickFora(e) {
+  if (containerRef.value && !containerRef.value.contains(e.target)) {
+    aberto.value = false
+  }
+}
+
+function handleKeydown(e) {
+  if (e.key === 'Escape') aberto.value = false
+}
+
+onMounted(() => {
+  document.addEventListener('click', handleClickFora)
+  document.addEventListener('keydown', handleKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickFora)
+  document.removeEventListener('keydown', handleKeydown)
+})
 </script>
 
 <template>
-  <div class="app-select">
+  <div class="app-select" ref="containerRef">
     <label class="select-label">{{ label }}</label>
-    <select
-      :value="modelValue"
-      :required="required"
-      @change="$emit('update:modelValue', $event.target.value)"
+    <div
+      class="select-box"
+      :class="{ open: aberto }"
+      @click="toggle"
+      tabindex="0"
+      @keydown.enter="toggle"
+      @keydown.space.prevent="toggle"
     >
-      <option value="" disabled hidden selected>Selecione...</option>
-      <option
+      <span class="select-value" :class="{ placeholder: !modelValue }">
+        {{ labelSelecionado || placeholder }}
+      </span>
+      <ChevronDown class="select-arrow" :class="{ rotated: aberto }" />
+    </div>
+
+    <ul v-if="aberto" class="select-dropdown">
+      <li
         v-for="opt in options"
         :key="opt.value"
-        :value="opt.value"
-      >{{ opt.label }}</option>
-    </select>
+        :class="{ selected: opt.value === modelValue }"
+        @click="selecionar(opt.value)"
+      >
+        {{ opt.label }}
+      </li>
+    </ul>
   </div>
 </template>
 
@@ -32,35 +85,85 @@ defineEmits(['update:modelValue'])
   flex-direction: column;
   gap: 4px;
   width: 100%;
+  position: relative;
 }
 
 .select-label {
-  font-size: 10px;
-  color: #4a9eff;
+  font-size: 11px;
+  color: var(--cor-texto-fraco);
   padding-left: 2px;
 }
 
-select {
-  width: 100%;
-  padding: 9px 12px;
+.select-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
   background-color: var(--cor-input-bg);
-  color: var(--cor-texto-forte);
   border: 1px solid var(--cor-borda);
   border-radius: 4px;
-  font-size: 13px;
-  font-family: inherit;
-  outline: none;
   cursor: pointer;
+  outline: none;
   transition: border-color 0.2s;
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888888' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 12px center;
-  background-color: var(--cor-input-bg);
-  padding-right: 32px;
+  min-height: 32px;
 }
 
-select:focus {
+.select-box:focus,
+.select-box.open {
   border-color: #4a9eff;
+}
+
+.select-value {
+  font-size: 13px;
+  color: var(--cor-texto-forte);
+}
+
+.select-value.placeholder {
+  color: var(--cor-texto-fraco);
+}
+
+.select-arrow {
+  width: 14px;
+  height: 14px;
+  color: var(--cor-texto-fraco);
+  flex-shrink: 0;
+  transition: transform 0.2s;
+}
+
+.select-arrow.rotated {
+  transform: rotate(180deg);
+}
+
+.select-dropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  background-color: var(--cor-input-bg);
+  border: 1px solid var(--cor-borda);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  list-style: none;
+  padding: 4px 0;
+  z-index: 9999;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.select-dropdown li {
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--cor-texto);
+  cursor: pointer;
+  transition: background-color 0.1s;
+}
+
+.select-dropdown li:hover {
+  background-color: var(--cor-menu-hover);
+  color: var(--cor-texto-forte);
+}
+
+.select-dropdown li.selected {
+  color: #4a9eff;
 }
 </style>

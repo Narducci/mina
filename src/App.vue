@@ -1,10 +1,10 @@
 <script setup>
-import AppMenu from './components/AppMenu.vue'
-import { exit } from '@tauri-apps/plugin-process'
-import router from './router/index.js'
+import AppMenu from "./components/AppMenu.vue";
+import { exit } from "@tauri-apps/plugin-process";
+import router from "./router/index.js";
 
 async function sair() {
-  await exit(0)
+  await exit(0);
 }
 </script>
 
@@ -21,9 +21,9 @@ async function sair() {
       @arquivo:backup="() => {}"
       @arquivo:restaurar="() => {}"
       @arquivo:sair="sair"
-      @periodo:novo="() => {}"
-      @periodo:diretos="() => {}"
-      @periodo:indiretos="() => {}"
+      @periodo:novo="router.push('/lancamentos/diretos?acao=novo')"
+      @periodo:diretos="router.push('/lancamentos/diretos')"
+      @periodo:indiretos="router.push('/lancamentos/indiretos')"
       @periodo:conciliar="() => {}"
       @comprovantes:inbox="() => {}"
       @comprovantes:disponiveis="() => {}"
@@ -45,22 +45,25 @@ async function sair() {
 
 <style>
 :root {
-  --cor-bg:           #181818;
-  --cor-menu-bg:      #222222;
-  --cor-menu-hover:   #333333;
-  --cor-borda:        #333333;
-  --cor-texto:        #cccccc;
-  --cor-texto-forte:  #ffffff;
-  --cor-texto-fraco:  #888888;
-  --cor-selecao:      #094771;
-  --cor-input-bg:     #2a2a2a;
+  --cor-bg: #181818;
+  --cor-menu-bg: #222222;
+  --cor-menu-hover: #333333;
+  --cor-borda: #555555;
+  --cor-texto: #cccccc;
+  --cor-texto-forte: #ffffff;
+  --cor-texto-fraco: #aaaaaa;
+  --cor-selecao: #094771;
+  --cor-input-bg: #2a2a2a;
 
-  font-family: "Lucida Sans", "Lucida Sans Unicode", Geneva, Verdana, sans-serif;
+  font-family:
+    "Lucida Sans", "Lucida Sans Unicode", Geneva, Verdana, sans-serif;
   font-size: 13px;
   user-select: none;
 }
 
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;

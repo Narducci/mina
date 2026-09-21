@@ -4,6 +4,8 @@ PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
 -- ─────────────────────────────────────────
+
+-- ─────────────────────────────────────────
 -- CONFIGURAÇÃO
 -- ─────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS configuracao (
