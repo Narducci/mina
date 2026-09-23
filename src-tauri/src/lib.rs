@@ -1,3 +1,4 @@
+use tauri::Manager;
 use tauri_plugin_sql::{Migration, MigrationKind};
 
 #[tauri::command]
@@ -31,6 +32,21 @@ pub fn run() {
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![greet])
+        .setup(|app| {
+            if let Some(monitor) = app.primary_monitor()? {
+                let size = monitor.size();
+                let w = (size.width as f64 * 0.8) as u32;
+                let h = (size.height as f64 * 0.8) as u32;
+                let x = ((size.width as f64 - w as f64) / 2.0) as i32;
+                let y = ((size.height as f64 - h as f64) / 2.0) as i32;
+                if let Some(window) = app.get_webview_window("main") {
+                    window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: w, height: h }))?;
+                    window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }))?;
+                    window.show()?;
+                }
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application")
 }

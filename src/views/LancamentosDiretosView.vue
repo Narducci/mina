@@ -1,150 +1,176 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import Database from '@tauri-apps/plugin-sql'
-import { ChevronLeft, ChevronRight, ChevronDown, Search } from '@lucide/vue'
-import { VueDraggable } from 'vue-draggable-plus'
-import ModalNovoPeriodo from '../components/ModalNovoPeriodo.vue'
-import ModalNovoLancamento from '../components/ModalNovoLancamento.vue'
-import ModalLancamento from '../components/ModalLancamento.vue'
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import { useRoute } from "vue-router";
+import Database from "@tauri-apps/plugin-sql";
+import { ChevronLeft, ChevronRight, ChevronDown, Search } from "@lucide/vue";
+import { VueDraggable } from "vue-draggable-plus";
+import ModalNovoPeriodo from "../components/ModalNovoPeriodo.vue";
+import ModalNovoLancamento from "../components/ModalNovoLancamento.vue";
+import ModalLancamento from "../components/ModalLancamento.vue";
 
-const route = useRoute()
+const route = useRoute();
 
-let db = null
+let db = null;
 async function getDb() {
-  if (!db) db = await Database.load('sqlite:mina.db')
-  return db
+  if (!db) db = await Database.load("sqlite:mina.db");
+  return db;
 }
 
 // ── Períodos ──────────────────────────────────────────────
-const periodos           = ref([])
-const periodoAtivoId     = ref(null)
-const erroCarregamento   = ref('')
-const menuPeriodosAberto = ref(false)
-const menuAnchorRef      = ref(null)
+const periodos = ref([]);
+const periodoAtivoId = ref(null);
+const erroCarregamento = ref("");
+const menuPeriodosAberto = ref(false);
+const menuAnchorRef = ref(null);
 
-const periodoAtivo = computed(() =>
-  periodos.value.find(p => p.id === periodoAtivoId.value) ?? null
-)
+const periodoAtivo = computed(
+  () => periodos.value.find((p) => p.id === periodoAtivoId.value) ?? null,
+);
 const indicePeriodoAtivo = computed(() =>
-  periodos.value.findIndex(p => p.id === periodoAtivoId.value)
-)
+  periodos.value.findIndex((p) => p.id === periodoAtivoId.value),
+);
 
-function podePeriodoAnterior() { return indicePeriodoAtivo.value > 0 }
-function podeProximoPeriodo()  { return indicePeriodoAtivo.value < periodos.value.length - 1 }
-function irPeriodoAnterior()   { if (podePeriodoAnterior()) periodoAtivoId.value = periodos.value[indicePeriodoAtivo.value - 1].id }
-function irProximoPeriodo()    { if (podeProximoPeriodo())  periodoAtivoId.value = periodos.value[indicePeriodoAtivo.value + 1].id }
-
-function formatarPeriodo(p) {
-  const meses = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
-  return `${meses[p.mes - 1]}/${p.ano}`
+function podePeriodoAnterior() {
+  return indicePeriodoAtivo.value > 0;
+}
+function podeProximoPeriodo() {
+  return indicePeriodoAtivo.value < periodos.value.length - 1;
+}
+function irPeriodoAnterior() {
+  if (podePeriodoAnterior())
+    periodoAtivoId.value = periodos.value[indicePeriodoAtivo.value - 1].id;
+}
+function irProximoPeriodo() {
+  if (podeProximoPeriodo())
+    periodoAtivoId.value = periodos.value[indicePeriodoAtivo.value + 1].id;
 }
 
-function toggleMenuPeriodos() { menuPeriodosAberto.value = !menuPeriodosAberto.value }
-function fecharMenuPeriodos() { menuPeriodosAberto.value = false }
+function formatarPeriodo(p) {
+  const meses = [
+    "Jan",
+    "Fev",
+    "Mar",
+    "Abr",
+    "Mai",
+    "Jun",
+    "Jul",
+    "Ago",
+    "Set",
+    "Out",
+    "Nov",
+    "Dez",
+  ];
+  return `${meses[p.mes - 1]}/${p.ano}`;
+}
+
+function toggleMenuPeriodos() {
+  menuPeriodosAberto.value = !menuPeriodosAberto.value;
+}
+function fecharMenuPeriodos() {
+  menuPeriodosAberto.value = false;
+}
 
 function handleClickFora(e) {
   if (menuAnchorRef.value && !menuAnchorRef.value.contains(e.target))
-    fecharMenuPeriodos()
+    fecharMenuPeriodos();
 }
 
 async function carregarPeriodos(idParaAtivar = null) {
-  erroCarregamento.value = ''
+  erroCarregamento.value = "";
   try {
-    const banco = await getDb()
+    const banco = await getDb();
     periodos.value = await banco.select(
       `SELECT id, mes, ano, status, saldo_inicial, comprovante_id
-         FROM periodo WHERE deletado_em IS NULL ORDER BY ano, mes`
-    )
+         FROM periodo WHERE deletado_em IS NULL ORDER BY ano, mes`,
+    );
     if (periodos.value.length === 0) {
-      periodoAtivoId.value = null
-      lancamentos.value = []
-      return
+      periodoAtivoId.value = null;
+      lancamentos.value = [];
+      return;
     }
-    const alvo   = idParaAtivar ?? periodoAtivoId.value
-    const existe = periodos.value.some(p => p.id === alvo)
-    periodoAtivoId.value = existe ? alvo : periodos.value[periodos.value.length - 1].id
+    const alvo = idParaAtivar ?? periodoAtivoId.value;
+    const existe = periodos.value.some((p) => p.id === alvo);
+    periodoAtivoId.value = existe
+      ? alvo
+      : periodos.value[periodos.value.length - 1].id;
   } catch (err) {
-    console.error('Erro ao carregar períodos:', err)
-    erroCarregamento.value = 'Erro ao carregar períodos.'
+    console.error("Erro ao carregar períodos:", err);
+    erroCarregamento.value = "Erro ao carregar períodos.";
   }
 }
 
 // ── Lançamentos ───────────────────────────────────────────
-const lancamentos = ref([])
-const categorias  = ref([])
-const termoBusca  = ref('')
+const lancamentos = ref([]);
+const categorias = ref([]);
+const termoBusca = ref("");
 
 // Lista base filtrada — é sobre ela que o drag & drop opera
 const lancamentosBase = computed(() => {
-  const termo = termoBusca.value.trim().toLowerCase()
-  if (!termo) return lancamentos.value
-  return lancamentos.value.filter(l =>
-    (l.descricao      ?? '').toLowerCase().includes(termo) ||
-    (l.categoria_nome ?? '').toLowerCase().includes(termo) ||
-    (l.pessoa_nome    ?? '').toLowerCase().includes(termo)
-  )
-})
+  const termo = termoBusca.value.trim().toLowerCase();
+  if (!termo) return lancamentos.value;
+  return lancamentos.value.filter(
+    (l) =>
+      (l.descricao ?? "").toLowerCase().includes(termo) ||
+      (l.categoria_nome ?? "").toLowerCase().includes(termo) ||
+      (l.pessoa_nome ?? "").toLowerCase().includes(termo),
+  );
+});
 
 // Lista com saldo acumulado calculado linha a linha
 const lancamentosComSaldo = computed(() => {
-  const saldoInicial = periodoAtivo.value?.saldo_inicial ?? 0
-  let acumulado = saldoInicial
-  return lancamentosBase.value.map(l => {
-    const cat  = categorias.value.find(c => c.id === l.categoria_id)
-    const tipo = cat?.tipo ?? 'neutro'
-    if (tipo === 'entrada') acumulado += l.valor
-    else if (tipo === 'saida') acumulado -= l.valor
-    return { ...l, saldo_acumulado: acumulado, tipo_categoria: tipo }
-  })
-})
+  const saldoInicial = periodoAtivo.value?.saldo_inicial ?? 0;
+  let acumulado = saldoInicial;
+  return lancamentosBase.value.map((l) => {
+    const cat = categorias.value.find((c) => c.id === l.categoria_id);
+    const tipo = cat?.tipo ?? "neutro";
+    if (tipo === "entrada") acumulado += l.valor;
+    else if (tipo === "saida") acumulado -= l.valor;
+    return { ...l, saldo_acumulado: acumulado, tipo_categoria: tipo };
+  });
+});
 
 // Lista reativa usada pelo VueDraggable (somente quando não há filtro)
-const lancamentosArrastaveis = ref([])
+const lancamentosArrastaveis = ref([]);
 
-watch(lancamentos, (val) => {
-  lancamentosArrastaveis.value = [...val]
-}, { immediate: true })
+watch(
+  lancamentos,
+  (val) => {
+    lancamentosArrastaveis.value = [...val];
+  },
+  { immediate: true },
+);
 
-async function onDragEnd() {
+function onDragEnd() {
+  // Drag & drop visual — persistência on-hold
   lancamentos.value = [...lancamentosArrastaveis.value]
-
-  try {
-    const banco = await getDb()
-    const arr = lancamentosArrastaveis.value
-
-    // Uma única query atômica — sem colisão de UNIQUE
-    const cases = arr.map((l, i) => `WHEN id = ${l.id} THEN ${i + 1}`).join(' ')
-    const ids   = arr.map(l => l.id).join(', ')
-    await banco.execute(
-      `UPDATE lancamento SET ordem = CASE ${cases} END WHERE id IN (${ids})`
-    )
-  } catch (err) {
-    console.error('Erro ao persistir ordem:', err)
-  }
 }
 
 const saldoFinal = computed(() => {
-  const rows = lancamentosComSaldo.value
-  if (rows.length === 0) return periodoAtivo.value?.saldo_inicial ?? 0
-  return rows[rows.length - 1].saldo_acumulado
-})
+  const rows = lancamentosComSaldo.value;
+  if (rows.length === 0) return periodoAtivo.value?.saldo_inicial ?? 0;
+  return rows[rows.length - 1].saldo_acumulado;
+});
 
 async function carregarCategorias() {
   try {
-    const banco = await getDb()
+    const banco = await getDb();
     categorias.value = await banco.select(
       `SELECT id, nome, tipo FROM categoria
         WHERE deletado_em IS NULL AND ativa = 1
-          AND disponivel_em IN ('direto','ambos') ORDER BY nome`
-    )
-  } catch (err) { console.error('Erro ao carregar categorias:', err) }
+          AND disponivel_em IN ('direto','ambos') ORDER BY nome`,
+    );
+  } catch (err) {
+    console.error("Erro ao carregar categorias:", err);
+  }
 }
 
 async function carregarLancamentos() {
-  if (!periodoAtivoId.value) { lancamentos.value = []; return }
+  if (!periodoAtivoId.value) {
+    lancamentos.value = [];
+    return;
+  }
   try {
-    const banco = await getDb()
+    const banco = await getDb();
     lancamentos.value = await banco.select(
       `SELECT l.id, l.data, l.descricao, l.valor, l.ordem,
               l.categoria_id, l.pessoa_id, l.comprovante_id,
@@ -155,116 +181,152 @@ async function carregarLancamentos() {
          LEFT JOIN pessoa p ON p.id = l.pessoa_id
         WHERE l.periodo_id = ? AND l.tipo = 'direto' AND l.deletado_em IS NULL
         ORDER BY l.ordem`,
-      [periodoAtivoId.value]
-    )
-  } catch (err) { console.error('Erro ao carregar lançamentos:', err) }
+      [periodoAtivoId.value],
+    );
+  } catch (err) {
+    console.error("Erro ao carregar lançamentos:", err);
+  }
 }
 
-watch(periodoAtivoId, async () => { await carregarLancamentos() })
+watch(periodoAtivoId, async () => {
+  await carregarLancamentos();
+});
 
 // ── Formatação ────────────────────────────────────────────
 function formatarData(iso) {
-  if (!iso) return ''
-  const [a, m, d] = iso.split('-')
-  return `${d}/${m}/${a}`
+  if (!iso) return "";
+  const [a, m, d] = iso.split("-");
+  return `${d}/${m}/${a}`;
 }
 
 function formatarValor(valor, tipo) {
-  const abs = Math.abs(valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })
-  if (tipo === 'entrada') return `+R$ ${abs}`
-  if (tipo === 'saida')   return `-R$ ${abs}`
-  return `R$ ${abs}`
+  const abs = Math.abs(valor).toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+  });
+  if (tipo === "entrada") return `+R$ ${abs}`;
+  if (tipo === "saida") return `-R$ ${abs}`;
+  return `R$ ${abs}`;
 }
 
 function formatarReais(valor) {
-  const abs = Math.abs(valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })
-  if (valor < 0) return `(R$ ${abs})`
-  return `R$ ${abs}`
+  const abs = Math.abs(valor).toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+  });
+  if (valor < 0) return `(R$ ${abs})`;
+  return `R$ ${abs}`;
 }
 
 // ── Modal Lançamento (leitura / edição / exclusão) ────────
-const modalLancamentoAberto  = ref(false)
-const lancamentoSelecionado  = ref(null)
+const modalLancamentoAberto = ref(false);
+const lancamentoSelecionado = ref(null);
 
 function abrirModalLancamento(l) {
-  lancamentoSelecionado.value = l
-  modalLancamentoAberto.value = true
+  lancamentoSelecionado.value = l;
+  modalLancamentoAberto.value = true;
 }
 
 function fecharModalLancamento() {
-  modalLancamentoAberto.value = false
-  lancamentoSelecionado.value = null
+  modalLancamentoAberto.value = false;
+  lancamentoSelecionado.value = null;
 }
 
 async function onLancamentoAtualizado() {
-  await carregarLancamentos()
+  await carregarLancamentos();
 }
 
 async function onLancamentoExcluido() {
-  await carregarLancamentos()
+  await carregarLancamentos();
 }
 
 // ── Modal Novo Lançamento ─────────────────────────────────
-const modalNovoLancamentoAberto = ref(false)
+const modalNovoLancamentoAberto = ref(false);
 
-function abrirModalNovoLancamento()  { modalNovoLancamentoAberto.value = true }
-function fecharModalNovoLancamento() { modalNovoLancamentoAberto.value = false }
+function abrirModalNovoLancamento() {
+  modalNovoLancamentoAberto.value = true;
+}
+function fecharModalNovoLancamento() {
+  modalNovoLancamentoAberto.value = false;
+}
 
 async function onLancamentoCriado() {
-  await carregarLancamentos()
+  await carregarLancamentos();
 }
 
 // ── Modal Novo Período ────────────────────────────────────
-const modalNovoPeriodoAberto = ref(false)
+const modalNovoPeriodoAberto = ref(false);
 
-function abrirModalNovoPeriodo()  { modalNovoPeriodoAberto.value = true;  fecharMenuPeriodos() }
-function fecharModalNovoPeriodo() { modalNovoPeriodoAberto.value = false }
+function abrirModalNovoPeriodo() {
+  modalNovoPeriodoAberto.value = true;
+  fecharMenuPeriodos();
+}
+function fecharModalNovoPeriodo() {
+  modalNovoPeriodoAberto.value = false;
+}
 
-async function onPeriodoCriado(periodo) { await carregarPeriodos(periodo.id) }
+async function onPeriodoCriado(periodo) {
+  await carregarPeriodos(periodo.id);
+}
 
 watch(
   () => route.query.acao,
-  (acao) => { if (acao === 'novo') abrirModalNovoPeriodo() },
-  { immediate: true }
-)
+  (acao) => {
+    if (acao === "novo") abrirModalNovoPeriodo();
+  },
+  { immediate: true },
+);
 
 onMounted(async () => {
-  await carregarCategorias()
-  await carregarPeriodos()
-  document.addEventListener('click', handleClickFora)
-})
+  await carregarCategorias();
+  await carregarPeriodos();
+  document.addEventListener("click", handleClickFora);
+});
 
 onUnmounted(() => {
-  document.removeEventListener('click', handleClickFora)
-})
+  document.removeEventListener("click", handleClickFora);
+});
 </script>
 
 <template>
   <div class="main-panel">
     <div class="shell">
-
       <!-- ── Painel superior ── -->
       <div class="painel-superior" v-if="periodoAtivo || periodos.length === 0">
         <div class="grade-linha sup-linha">
           <div class="sup-nav-status">
             <div class="nav-periodo">
-              <button class="btn-chevron" :disabled="!podePeriodoAnterior()" @click="irPeriodoAnterior">
+              <button
+                class="btn-chevron"
+                :disabled="!podePeriodoAnterior()"
+                @click="irPeriodoAnterior"
+              >
                 <ChevronLeft :size="16" />
               </button>
-              <span class="periodo-label">{{ periodoAtivo ? formatarPeriodo(periodoAtivo) : '—' }}</span>
-              <button class="btn-chevron" :disabled="!podeProximoPeriodo()" @click="irProximoPeriodo">
+              <span class="periodo-label">{{
+                periodoAtivo ? formatarPeriodo(periodoAtivo) : "—"
+              }}</span>
+              <button
+                class="btn-chevron"
+                :disabled="!podeProximoPeriodo()"
+                @click="irProximoPeriodo"
+              >
                 <ChevronRight :size="16" />
               </button>
             </div>
-            <span v-if="periodoAtivo" class="badge-status" :class="periodoAtivo.status">
-              {{ periodoAtivo.status === 'aberto' ? 'ABERTO' : 'CONCILIADO' }}
+            <span
+              v-if="periodoAtivo"
+              class="badge-status"
+              :class="periodoAtivo.status"
+            >
+              {{ periodoAtivo.status === "aberto" ? "ABERTO" : "CONCILIADO" }}
             </span>
           </div>
           <div class="sup-vazio-valor"></div>
           <div class="sup-saldo">
             <template v-if="periodoAtivo">
               <span class="rotulo-saldo">Saldo inicial:</span>
-              <span class="valor-saldo-num">{{ formatarReais(periodoAtivo.saldo_inicial) }}</span>
+              <span class="valor-saldo-num">{{
+                formatarReais(periodoAtivo.saldo_inicial)
+              }}</span>
             </template>
           </div>
           <div class="sup-vazio-comp"></div>
@@ -272,14 +334,34 @@ onUnmounted(() => {
             <div class="menu-anchor" ref="menuAnchorRef">
               <button class="btn-periodos" @click.stop="toggleMenuPeriodos">
                 <span>Períodos</span>
-                <ChevronDown :size="14" class="chevron-periodos" :class="{ rotated: menuPeriodosAberto }" />
+                <ChevronDown
+                  :size="14"
+                  class="chevron-periodos"
+                  :class="{ rotated: menuPeriodosAberto }"
+                />
               </button>
               <div v-if="menuPeriodosAberto" class="dropdown-periodos">
-                <button class="dropdown-item" @click="abrirModalNovoPeriodo">Novo período</button>
-                <button class="dropdown-item" :disabled="!periodoAtivo">Editar período</button>
+                <button class="dropdown-item" @click="abrirModalNovoPeriodo">
+                  Novo período
+                </button>
+                <button class="dropdown-item" :disabled="!periodoAtivo">
+                  Editar período
+                </button>
                 <div class="dropdown-separator"></div>
-                <button class="dropdown-item" :disabled="!periodoAtivo || periodoAtivo?.status !== 'aberto'">Conciliar</button>
-                <button class="dropdown-item item-perigo" :disabled="!periodoAtivo || periodoAtivo?.status !== 'conciliado'">Desconciliar</button>
+                <button
+                  class="dropdown-item"
+                  :disabled="!periodoAtivo || periodoAtivo?.status !== 'aberto'"
+                >
+                  Conciliar
+                </button>
+                <button
+                  class="dropdown-item item-perigo"
+                  :disabled="
+                    !periodoAtivo || periodoAtivo?.status !== 'conciliado'
+                  "
+                >
+                  Desconciliar
+                </button>
               </div>
             </div>
           </div>
@@ -296,7 +378,13 @@ onUnmounted(() => {
             placeholder="Buscar..."
             v-model="termoBusca"
           />
-          <button v-if="termoBusca" class="busca-limpar" @click="termoBusca = ''">✕</button>
+          <button
+            v-if="termoBusca"
+            class="busca-limpar"
+            @click="termoBusca = ''"
+          >
+            ✕
+          </button>
         </div>
       </div>
 
@@ -311,7 +399,9 @@ onUnmounted(() => {
           <div class="cel-saldo col-header">SALDO</div>
           <div class="cel-comprovantes col-header">COMPROVANTES</div>
           <div class="cel-acoes">
-            <button class="btn-novo" @click="abrirModalNovoLancamento">+</button>
+            <button class="btn-novo" @click="abrirModalNovoLancamento">
+              +
+            </button>
           </div>
         </div>
       </div>
@@ -346,21 +436,46 @@ onUnmounted(() => {
               <div class="cel-data">{{ formatarData(l.data) }}</div>
               <div class="cel-descricao">
                 <span class="descricao-texto">{{ l.descricao }}</span>
-                <span v-if="l.pessoa_nome" class="pessoa-nome">{{ l.pessoa_nome }}</span>
+                <span v-if="l.pessoa_nome" class="pessoa-nome">{{
+                  l.pessoa_nome
+                }}</span>
               </div>
               <div class="cel-categoria">{{ l.categoria_nome }}</div>
               <div class="cel-valor" :class="l.tipo_categoria">
                 {{ formatarValor(l.valor, l.tipo_categoria) }}
               </div>
-              <div class="cel-saldo" :class="{ negativo: l.saldo_acumulado < 0 }">{{ formatarReais(l.saldo_acumulado) }}</div>
+              <div
+                class="cel-saldo"
+                :class="{ negativo: l.saldo_acumulado < 0 }"
+              >
+                {{ formatarReais(l.saldo_acumulado) }}
+              </div>
               <div class="cel-comprovantes">
                 <span class="ic-comprovante">🔗</span>
                 <span class="comprovante-count">0</span>
               </div>
               <div class="cel-acoes acoes-linha">
-                <button class="btn-acao" title="Ver" @click.stop="abrirModalLancamento(l)">👁</button>
-                <button class="btn-acao" title="Editar" @click.stop="abrirModalLancamento(l)">✏</button>
-                <button class="btn-acao btn-excluir" title="Excluir" @click.stop="abrirModalLancamento(l)">🗑</button>
+                <button
+                  class="btn-acao"
+                  title="Ver"
+                  @click.stop="abrirModalLancamento(l)"
+                >
+                  👁
+                </button>
+                <button
+                  class="btn-acao"
+                  title="Editar"
+                  @click.stop="abrirModalLancamento(l)"
+                >
+                  ✏
+                </button>
+                <button
+                  class="btn-acao btn-excluir"
+                  title="Excluir"
+                  @click.stop="abrirModalLancamento(l)"
+                >
+                  🗑
+                </button>
               </div>
             </div>
           </VueDraggable>
@@ -379,7 +494,10 @@ onUnmounted(() => {
           <div class="cel-descricao"></div>
           <div class="cel-categoria"></div>
           <div class="cel-valor"></div>
-          <div class="cel-saldo cel-saldo-rodape" :class="{ negativo: saldoFinal < 0 }">
+          <div
+            class="cel-saldo cel-saldo-rodape"
+            :class="{ negativo: saldoFinal < 0 }"
+          >
             <span class="rotulo-saldo">Saldo final:</span>
             <span class="valor-saldo-num">{{ formatarReais(saldoFinal) }}</span>
           </div>
@@ -387,7 +505,6 @@ onUnmounted(() => {
           <div class="cel-acoes"></div>
         </div>
       </div>
-
     </div>
   </div>
 
@@ -450,7 +567,9 @@ onUnmounted(() => {
 }
 
 /* ── Painel superior — células com span ── */
-.sup-linha    { min-height: 44px; }
+.sup-linha {
+  min-height: 44px;
+}
 
 .sup-nav-status {
   grid-column: 1 / 5;
@@ -460,7 +579,9 @@ onUnmounted(() => {
   padding: 0 10px;
 }
 
-.sup-vazio-valor { grid-column: 5; }
+.sup-vazio-valor {
+  grid-column: 5;
+}
 
 .sup-saldo {
   grid-column: 6;
@@ -471,7 +592,9 @@ onUnmounted(() => {
   padding: 0 10px;
 }
 
-.sup-vazio-comp { grid-column: 7; }
+.sup-vazio-comp {
+  grid-column: 7;
+}
 
 .sup-acoes {
   grid-column: 8;
@@ -482,14 +605,45 @@ onUnmounted(() => {
 }
 
 /* ── Células do datagrid ── */
-.cel-drag         { padding: 0 4px; }
-.cel-data         { padding: 0 10px; font-size: 13px; }
-.cel-descricao    { padding: 0 10px; min-width: 0; }
-.cel-categoria    { padding: 0 10px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cel-valor        { padding: 0 10px; text-align: right; font-size: 13px; }
-.cel-saldo        { padding: 0 10px; text-align: right; font-size: 13px; color: var(--cor-texto-forte); }
-.cel-comprovantes { padding: 0 10px; }
-.cel-acoes        { padding: 0 10px; display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.cel-drag {
+  padding: 0 4px;
+}
+.cel-data {
+  padding: 0 10px;
+  font-size: 13px;
+}
+.cel-descricao {
+  padding: 0 10px;
+  min-width: 0;
+}
+.cel-categoria {
+  padding: 0 10px;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cel-valor {
+  padding: 0 10px;
+  text-align: right;
+  font-size: 13px;
+}
+.cel-saldo {
+  padding: 0 10px;
+  text-align: right;
+  font-size: 13px;
+  color: var(--cor-texto-forte);
+}
+.cel-comprovantes {
+  padding: 0 10px;
+}
+.cel-acoes {
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
 
 /* ── Painel superior ── */
 .painel-superior {
@@ -498,7 +652,11 @@ onUnmounted(() => {
   padding: 4px 0;
 }
 
-.nav-periodo { display: flex; align-items: center; gap: 8px; }
+.nav-periodo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 
 .btn-chevron {
   background: none;
@@ -513,11 +671,19 @@ onUnmounted(() => {
   justify-content: center;
   padding: 0;
   flex-shrink: 0;
-  transition: border-color 0.15s, color 0.15s;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
 }
 
-.btn-chevron:disabled { opacity: 0.3; cursor: default; }
-.btn-chevron:not(:disabled):hover { border-color: #4a9eff; color: #4a9eff; }
+.btn-chevron:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.btn-chevron:not(:disabled):hover {
+  border-color: #4a9eff;
+  color: #4a9eff;
+}
 
 .periodo-label {
   font-size: 14px;
@@ -538,8 +704,14 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.badge-status.aberto     { background-color: #1a4a1a; color: #66cc66; }
-.badge-status.conciliado { background-color: #1a3a5a; color: #4a9eff; }
+.badge-status.aberto {
+  background-color: #1a4a1a;
+  color: #66cc66;
+}
+.badge-status.conciliado {
+  background-color: #1a3a5a;
+  color: #4a9eff;
+}
 
 .rotulo-saldo {
   font-size: 12px;
@@ -559,7 +731,9 @@ onUnmounted(() => {
 }
 
 /* ── Botão Períodos ── */
-.menu-anchor { position: relative; }
+.menu-anchor {
+  position: relative;
+}
 
 .btn-periodos {
   display: flex;
@@ -574,12 +748,22 @@ onUnmounted(() => {
   font-family: inherit;
   cursor: pointer;
   white-space: nowrap;
-  transition: border-color 0.15s, color 0.15s;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
 }
 
-.btn-periodos:hover { border-color: #4a9eff; color: var(--cor-texto-forte); }
-.chevron-periodos { transition: transform 0.2s; flex-shrink: 0; }
-.chevron-periodos.rotated { transform: rotate(180deg); }
+.btn-periodos:hover {
+  border-color: #4a9eff;
+  color: var(--cor-texto-forte);
+}
+.chevron-periodos {
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+.chevron-periodos.rotated {
+  transform: rotate(180deg);
+}
 
 .dropdown-periodos {
   position: absolute;
@@ -589,7 +773,7 @@ onUnmounted(() => {
   background-color: var(--cor-input-bg);
   border: 1px solid var(--cor-borda);
   border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
   z-index: 9999;
   padding: 4px 0;
 }
@@ -607,11 +791,26 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.dropdown-item:hover:not(:disabled) { background-color: var(--cor-menu-hover); color: var(--cor-texto-forte); }
-.dropdown-item:disabled { opacity: 0.35; cursor: default; }
-.dropdown-item.item-perigo { color: #cc6666; }
-.dropdown-item.item-perigo:hover:not(:disabled) { background-color: #3a1a1a; color: #ff6666; }
-.dropdown-separator { height: 1px; background-color: var(--cor-borda); margin: 4px 0; }
+.dropdown-item:hover:not(:disabled) {
+  background-color: var(--cor-menu-hover);
+  color: var(--cor-texto-forte);
+}
+.dropdown-item:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.dropdown-item.item-perigo {
+  color: #cc6666;
+}
+.dropdown-item.item-perigo:hover:not(:disabled) {
+  background-color: #3a1a1a;
+  color: #ff6666;
+}
+.dropdown-separator {
+  height: 1px;
+  background-color: var(--cor-borda);
+  margin: 4px 0;
+}
 
 /* ── Barra de busca ── */
 .barra-busca {
@@ -631,7 +830,10 @@ onUnmounted(() => {
   max-width: 520px;
 }
 
-.busca-icone { color: var(--cor-texto-fraco); flex-shrink: 0; }
+.busca-icone {
+  color: var(--cor-texto-fraco);
+  flex-shrink: 0;
+}
 
 .busca-input {
   flex: 1;
@@ -644,7 +846,9 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-.busca-input::placeholder { color: var(--cor-texto-fraco); }
+.busca-input::placeholder {
+  color: var(--cor-texto-fraco);
+}
 
 .busca-limpar {
   background: none;
@@ -656,7 +860,9 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.busca-limpar:hover { color: #cc4444; }
+.busca-limpar:hover {
+  color: #cc4444;
+}
 
 /* ── Cabeçalho ── */
 .grade-cabecalho {
@@ -690,10 +896,15 @@ onUnmounted(() => {
   padding: 0;
 }
 
-.btn-novo:hover { background-color: #3a8eef; }
+.btn-novo:hover {
+  background-color: #3a8eef;
+}
 
 /* ── Datagrid ── */
-.datagrid { flex: 1; overflow-y: auto; }
+.datagrid {
+  flex: 1;
+  overflow-y: auto;
+}
 
 .linha-lancamento {
   border-bottom: 1px solid #2a2a2a;
@@ -702,14 +913,21 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.linha-lancamento:hover { background-color: var(--cor-menu-hover); }
+.linha-lancamento:hover {
+  background-color: var(--cor-menu-hover);
+}
 
 .linha-ghost {
   opacity: 0.4;
   background-color: var(--cor-menu-hover);
 }
 
-.handle { color: var(--cor-texto-fraco); cursor: grab; font-size: 14px; text-align: center; }
+.handle {
+  color: var(--cor-texto-fraco);
+  cursor: grab;
+  font-size: 14px;
+  text-align: center;
+}
 
 .descricao-texto {
   display: block;
@@ -730,16 +948,33 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
-.cel-valor.entrada { color: #66cc66; }
-.cel-valor.saida   { color: #cc4444; }
-.cel-valor.neutro  { color: var(--cor-texto); }
+.cel-valor.entrada {
+  color: #66cc66;
+}
+.cel-valor.saida {
+  color: #cc4444;
+}
+.cel-valor.neutro {
+  color: var(--cor-texto);
+}
 
-.cel-saldo.negativo { color: #cc4444; }
+.cel-saldo.negativo {
+  color: #cc4444;
+}
 
-.ic-comprovante    { font-size: 12px; opacity: 0.5; margin-right: 4px; }
-.comprovante-count { font-size: 12px; color: var(--cor-texto-fraco); }
+.ic-comprovante {
+  font-size: 12px;
+  opacity: 0.5;
+  margin-right: 4px;
+}
+.comprovante-count {
+  font-size: 12px;
+  color: var(--cor-texto-fraco);
+}
 
-.acoes-linha { justify-content: flex-end; }
+.acoes-linha {
+  justify-content: flex-end;
+}
 
 .btn-acao {
   background: none;
@@ -751,8 +986,12 @@ onUnmounted(() => {
   opacity: 0.6;
 }
 
-.btn-acao:hover    { opacity: 1; }
-.btn-excluir:hover { color: #cc4444; }
+.btn-acao:hover {
+  opacity: 1;
+}
+.btn-excluir:hover {
+  color: #cc4444;
+}
 
 /* ── Painel inferior ── */
 .painel-inferior {
@@ -781,7 +1020,9 @@ onUnmounted(() => {
   padding: 40px 0;
 }
 
-.msg-erro { color: #cc4444; }
+.msg-erro {
+  color: #cc4444;
+}
 
 .btn-novo-periodo {
   background-color: var(--cor-selecao);
@@ -794,5 +1035,7 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.btn-novo-periodo:hover { opacity: 0.85; }
+.btn-novo-periodo:hover {
+  opacity: 0.85;
+}
 </style>
