@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import Database from '@tauri-apps/plugin-sql'
 import { ChevronLeft, ChevronRight, ChevronDown, Search } from '@lucide/vue'
+import { VueDraggable } from 'vue-draggable-plus'
 import ModalNovoPeriodo from '../components/ModalNovoPeriodo.vue'
 import ModalNovoLancamento from '../components/ModalNovoLancamento.vue'
 import ModalLancamento from '../components/ModalLancamento.vue'
@@ -74,7 +75,8 @@ const lancamentos = ref([])
 const categorias  = ref([])
 const termoBusca  = ref('')
 
-const lancamentosFiltrados = computed(() => {
+// Lista base filtrada — é sobre ela que o drag & drop opera
+const lancamentosBase = computed(() => {
   const termo = termoBusca.value.trim().toLowerCase()
   if (!termo) return lancamentos.value
   return lancamentos.value.filter(l =>
@@ -84,10 +86,11 @@ const lancamentosFiltrados = computed(() => {
   )
 })
 
+// Lista com saldo acumulado calculado linha a linha
 const lancamentosComSaldo = computed(() => {
   const saldoInicial = periodoAtivo.value?.saldo_inicial ?? 0
   let acumulado = saldoInicial
-  return lancamentosFiltrados.value.map(l => {
+  return lancamentosBase.value.map(l => {
     const cat  = categorias.value.find(c => c.id === l.categoria_id)
     const tipo = cat?.tipo ?? 'neutro'
     if (tipo === 'entrada') acumulado += l.valor
@@ -95,6 +98,31 @@ const lancamentosComSaldo = computed(() => {
     return { ...l, saldo_acumulado: acumulado, tipo_categoria: tipo }
   })
 })
+
+// Lista reativa usada pelo VueDraggable (somente quando não há filtro)
+const lancamentosArrastaveis = ref([])
+
+watch(lancamentos, (val) => {
+  lancamentosArrastaveis.value = [...val]
+}, { immediate: true })
+
+async function onDragEnd() {
+  lancamentos.value = [...lancamentosArrastaveis.value]
+
+  try {
+    const banco = await getDb()
+    const arr = lancamentosArrastaveis.value
+
+    // Uma única query atômica — sem colisão de UNIQUE
+    const cases = arr.map((l, i) => `WHEN id = ${l.id} THEN ${i + 1}`).join(' ')
+    const ids   = arr.map(l => l.id).join(', ')
+    await banco.execute(
+      `UPDATE lancamento SET ordem = CASE ${cases} END WHERE id IN (${ids})`
+    )
+  } catch (err) {
+    console.error('Erro ao persistir ordem:', err)
+  }
+}
 
 const saldoFinal = computed(() => {
   const rows = lancamentosComSaldo.value
@@ -149,7 +177,9 @@ function formatarValor(valor, tipo) {
 }
 
 function formatarReais(valor) {
-  return `R$ ${Math.abs(valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+  const abs = Math.abs(valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })
+  if (valor < 0) return `(R$ ${abs})`
+  return `R$ ${abs}`
 }
 
 // ── Modal Lançamento (leitura / edição / exclusão) ────────
@@ -298,33 +328,43 @@ onUnmounted(() => {
           </button>
         </div>
         <template v-else>
-          <div
-            v-for="l in lancamentosComSaldo"
-            :key="l.id"
-            class="grade-linha linha-lancamento"
-            @dblclick="abrirModalLancamento(l)"
+          <VueDraggable
+            v-model="lancamentosArrastaveis"
+            :disabled="!!termoBusca"
+            handle=".handle"
+            :animation="150"
+            ghost-class="linha-ghost"
+            :onEnd="onDragEnd"
           >
-            <div class="cel-drag handle">⠿</div>
-            <div class="cel-data">{{ formatarData(l.data) }}</div>
-            <div class="cel-descricao">
-              <span class="descricao-texto">{{ l.descricao }}</span>
-              <span v-if="l.pessoa_nome" class="pessoa-nome">{{ l.pessoa_nome }}</span>
+            <div
+              v-for="l in lancamentosComSaldo"
+              :key="l.id"
+              class="grade-linha linha-lancamento"
+              @dblclick="abrirModalLancamento(l)"
+            >
+              <div class="cel-drag handle">⠿</div>
+              <div class="cel-data">{{ formatarData(l.data) }}</div>
+              <div class="cel-descricao">
+                <span class="descricao-texto">{{ l.descricao }}</span>
+                <span v-if="l.pessoa_nome" class="pessoa-nome">{{ l.pessoa_nome }}</span>
+              </div>
+              <div class="cel-categoria">{{ l.categoria_nome }}</div>
+              <div class="cel-valor" :class="l.tipo_categoria">
+                {{ formatarValor(l.valor, l.tipo_categoria) }}
+              </div>
+              <div class="cel-saldo" :class="{ negativo: l.saldo_acumulado < 0 }">{{ formatarReais(l.saldo_acumulado) }}</div>
+              <div class="cel-comprovantes">
+                <span class="ic-comprovante">🔗</span>
+                <span class="comprovante-count">0</span>
+              </div>
+              <div class="cel-acoes acoes-linha">
+                <button class="btn-acao" title="Ver" @click.stop="abrirModalLancamento(l)">👁</button>
+                <button class="btn-acao" title="Editar" @click.stop="abrirModalLancamento(l)">✏</button>
+                <button class="btn-acao btn-excluir" title="Excluir" @click.stop="abrirModalLancamento(l)">🗑</button>
+              </div>
             </div>
-            <div class="cel-categoria">{{ l.categoria_nome }}</div>
-            <div class="cel-valor" :class="l.tipo_categoria">
-              {{ formatarValor(l.valor, l.tipo_categoria) }}
-            </div>
-            <div class="cel-saldo">{{ formatarReais(l.saldo_acumulado) }}</div>
-            <div class="cel-comprovantes">
-              <span class="ic-comprovante">🔗</span>
-              <span class="comprovante-count">0</span>
-            </div>
-            <div class="cel-acoes acoes-linha">
-              <button class="btn-acao" title="Ver" @click.stop="abrirModalLancamento(l)">👁</button>
-              <button class="btn-acao" title="Editar" @click.stop="abrirModalLancamento(l)">✏</button>
-              <button class="btn-acao btn-excluir" title="Excluir" @click.stop="abrirModalLancamento(l)">🗑</button>
-            </div>
-          </div>
+          </VueDraggable>
+
           <div v-if="lancamentosComSaldo.length === 0" class="estado-vazio">
             <p>Nenhum lançamento encontrado.</p>
           </div>
@@ -339,7 +379,7 @@ onUnmounted(() => {
           <div class="cel-descricao"></div>
           <div class="cel-categoria"></div>
           <div class="cel-valor"></div>
-          <div class="cel-saldo cel-saldo-rodape">
+          <div class="cel-saldo cel-saldo-rodape" :class="{ negativo: saldoFinal < 0 }">
             <span class="rotulo-saldo">Saldo final:</span>
             <span class="valor-saldo-num">{{ formatarReais(saldoFinal) }}</span>
           </div>
@@ -664,6 +704,11 @@ onUnmounted(() => {
 
 .linha-lancamento:hover { background-color: var(--cor-menu-hover); }
 
+.linha-ghost {
+  opacity: 0.4;
+  background-color: var(--cor-menu-hover);
+}
+
 .handle { color: var(--cor-texto-fraco); cursor: grab; font-size: 14px; text-align: center; }
 
 .descricao-texto {
@@ -688,6 +733,8 @@ onUnmounted(() => {
 .cel-valor.entrada { color: #66cc66; }
 .cel-valor.saida   { color: #cc4444; }
 .cel-valor.neutro  { color: var(--cor-texto); }
+
+.cel-saldo.negativo { color: #cc4444; }
 
 .ic-comprovante    { font-size: 12px; opacity: 0.5; margin-right: 4px; }
 .comprovante-count { font-size: 12px; color: var(--cor-texto-fraco); }
