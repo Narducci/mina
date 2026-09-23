@@ -5,6 +5,7 @@ import Database from '@tauri-apps/plugin-sql'
 import { ChevronLeft, ChevronRight, ChevronDown, Search } from '@lucide/vue'
 import ModalNovoPeriodo from '../components/ModalNovoPeriodo.vue'
 import ModalNovoLancamento from '../components/ModalNovoLancamento.vue'
+import ModalLancamento from '../components/ModalLancamento.vue'
 
 const route = useRoute()
 
@@ -151,6 +152,28 @@ function formatarReais(valor) {
   return `R$ ${Math.abs(valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
 }
 
+// ── Modal Lançamento (leitura / edição / exclusão) ────────
+const modalLancamentoAberto  = ref(false)
+const lancamentoSelecionado  = ref(null)
+
+function abrirModalLancamento(l) {
+  lancamentoSelecionado.value = l
+  modalLancamentoAberto.value = true
+}
+
+function fecharModalLancamento() {
+  modalLancamentoAberto.value = false
+  lancamentoSelecionado.value = null
+}
+
+async function onLancamentoAtualizado() {
+  await carregarLancamentos()
+}
+
+async function onLancamentoExcluido() {
+  await carregarLancamentos()
+}
+
 // ── Modal Novo Lançamento ─────────────────────────────────
 const modalNovoLancamentoAberto = ref(false)
 
@@ -279,6 +302,7 @@ onUnmounted(() => {
             v-for="l in lancamentosComSaldo"
             :key="l.id"
             class="grade-linha linha-lancamento"
+            @dblclick="abrirModalLancamento(l)"
           >
             <div class="cel-drag handle">⠿</div>
             <div class="cel-data">{{ formatarData(l.data) }}</div>
@@ -296,9 +320,9 @@ onUnmounted(() => {
               <span class="comprovante-count">0</span>
             </div>
             <div class="cel-acoes acoes-linha">
-              <button class="btn-acao" title="Ver">👁</button>
-              <button class="btn-acao" title="Editar">✏</button>
-              <button class="btn-acao btn-excluir" title="Excluir">🗑</button>
+              <button class="btn-acao" title="Ver" @click.stop="abrirModalLancamento(l)">👁</button>
+              <button class="btn-acao" title="Editar" @click.stop="abrirModalLancamento(l)">✏</button>
+              <button class="btn-acao btn-excluir" title="Excluir" @click.stop="abrirModalLancamento(l)">🗑</button>
             </div>
           </div>
           <div v-if="lancamentosComSaldo.length === 0" class="estado-vazio">
@@ -326,6 +350,14 @@ onUnmounted(() => {
 
     </div>
   </div>
+
+  <ModalLancamento
+    v-if="modalLancamentoAberto && lancamentoSelecionado"
+    :lancamento="lancamentoSelecionado"
+    @fechar="fecharModalLancamento"
+    @atualizado="onLancamentoAtualizado"
+    @excluido="onLancamentoExcluido"
+  />
 
   <ModalNovoPeriodo
     v-if="modalNovoPeriodoAberto"
@@ -627,6 +659,7 @@ onUnmounted(() => {
   border-bottom: 1px solid #2a2a2a;
   padding: 4px 0;
   transition: background-color 0.1s;
+  cursor: pointer;
 }
 
 .linha-lancamento:hover { background-color: var(--cor-menu-hover); }
