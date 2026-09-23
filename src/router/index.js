@@ -3,8 +3,7 @@ import { createRouter, createWebHashHistory } from "vue-router";
 const routes = [
   {
     path: "/",
-    name: "inicio",
-    component: () => import("../views/Inicio.vue"),
+    redirect: "/lancamentos/diretos",
   },
   {
     path: "/cadastros/categorias",
