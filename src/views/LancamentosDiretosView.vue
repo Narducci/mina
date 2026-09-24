@@ -141,9 +141,19 @@ watch(
   { immediate: true },
 );
 
-function onDragEnd() {
-  // Drag & drop visual — persistência on-hold
+async function onDragEnd() {
   lancamentos.value = [...lancamentosArrastaveis.value]
+  try {
+    const banco = await getDb()
+    for (let i = 0; i < lancamentosArrastaveis.value.length; i++) {
+      await banco.execute(
+        'UPDATE lancamento SET ordem = ? WHERE id = ?',
+        [i + 1, lancamentosArrastaveis.value[i].id]
+      )
+    }
+  } catch (err) {
+    console.error('Erro ao persistir ordem:', err)
+  }
 }
 
 const saldoFinal = computed(() => {

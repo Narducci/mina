@@ -27,6 +27,12 @@ pub fn run() {
             sql: include_str!("../schema_v3.sql"),
             kind: MigrationKind::Up,
         },
+            Migration {
+            version: 4,
+            description: "remove_unique_lancamento_periodo_tipo_ordem",
+            sql: include_str!("../schema_v4.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
