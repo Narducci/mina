@@ -7,6 +7,7 @@ const props = defineProps({
   modelValue:   { type: String, default: '' },
   options:      { type: Array,  required: true }, // [{ value, label }]
   placeholder:  { type: String, default: '' },
+  disabled:     { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -25,6 +26,7 @@ function selecionar(value) {
 }
 
 function toggle() {
+  if (props.disabled) return
   aberto.value = !aberto.value
 }
 
@@ -54,9 +56,9 @@ onUnmounted(() => {
     <label class="select-label">{{ label }}</label>
     <div
       class="select-box"
-      :class="{ open: aberto }"
+      :class="{ open: aberto, desabilitado: disabled }"
       @click="toggle"
-      tabindex="0"
+      :tabindex="disabled ? -1 : 0"
       @keydown.enter="toggle"
       @keydown.space.prevent="toggle"
     >
@@ -111,6 +113,11 @@ onUnmounted(() => {
 .select-box:focus,
 .select-box.open {
   border-color: #4a9eff;
+}
+
+.select-box.desabilitado {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .select-value {

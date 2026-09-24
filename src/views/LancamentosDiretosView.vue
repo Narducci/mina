@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRoute } from "vue-router";
 import Database from "@tauri-apps/plugin-sql";
-import { ChevronLeft, ChevronRight, ChevronDown, Search } from "@lucide/vue";
+import { ChevronLeft, ChevronRight, ChevronDown, Search, Eye } from "@lucide/vue";
 import { VueDraggable } from "vue-draggable-plus";
 import ModalNovoPeriodo from "../components/ModalNovoPeriodo.vue";
 import ModalNovoLancamento from "../components/ModalNovoLancamento.vue";
@@ -189,6 +189,7 @@ async function carregarLancamentos() {
 }
 
 watch(periodoAtivoId, async () => {
+  linhaSelecionadaId.value = null;
   await carregarLancamentos();
 });
 
@@ -216,6 +217,47 @@ function formatarReais(valor) {
   return `R$ ${abs}`;
 }
 
+// ── Seleção de linha ──────────────────────────────────────
+const linhaSelecionadaId = ref(null);
+
+function selecionarLinha(l) {
+  linhaSelecionadaId.value = l.id;
+}
+
+function handleTecladoDatagrid(e) {
+  // Não interfere quando há modal aberto
+  if (modalLancamentoAberto.value || modalNovoLancamentoAberto.value ||
+      modalNovoPeriodoAberto.value) return;
+  // Não interfere quando o foco está em input/textarea
+  const tag = document.activeElement?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA") return;
+
+  const lista = lancamentosComSaldo.value;
+  if (!lista.length) return;
+
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const idx = lista.findIndex((l) => l.id === linhaSelecionadaId.value);
+    let novo;
+    if (e.key === "ArrowDown") {
+      if (idx >= lista.length - 1) return;
+      novo = lista[idx + 1];
+    } else {
+      if (idx <= 0) return;
+      novo = lista[idx - 1];
+    }
+    linhaSelecionadaId.value = novo.id;
+    // Scroll para manter a linha visível
+    const el = document.querySelector(`[data-id="${novo.id}"]`);
+    el?.scrollIntoView({ block: "nearest" });
+  }
+
+  if (e.key === "Enter" && linhaSelecionadaId.value !== null) {
+    const l = lista.find((l) => l.id === linhaSelecionadaId.value);
+    if (l) abrirModalLancamento(l);
+  }
+}
+
 // ── Modal Lançamento (leitura / edição / exclusão) ────────
 const modalLancamentoAberto = ref(false);
 const lancamentoSelecionado = ref(null);
@@ -235,6 +277,7 @@ async function onLancamentoAtualizado() {
 }
 
 async function onLancamentoExcluido() {
+  linhaSelecionadaId.value = null;
   await carregarLancamentos();
 }
 
@@ -252,19 +295,33 @@ async function onLancamentoCriado() {
   await carregarLancamentos();
 }
 
-// ── Modal Novo Período ────────────────────────────────────
+// ── Modal Novo / Editar Período ───────────────────────────
 const modalNovoPeriodoAberto = ref(false);
+const periodoParaEditar = ref(null);
 
 function abrirModalNovoPeriodo() {
+  periodoParaEditar.value = null;
   modalNovoPeriodoAberto.value = true;
   fecharMenuPeriodos();
 }
+
+function abrirModalEditarPeriodo() {
+  periodoParaEditar.value = periodoAtivo.value;
+  modalNovoPeriodoAberto.value = true;
+  fecharMenuPeriodos();
+}
+
 function fecharModalNovoPeriodo() {
   modalNovoPeriodoAberto.value = false;
+  periodoParaEditar.value = null;
 }
 
 async function onPeriodoCriado(periodo) {
   await carregarPeriodos(periodo.id);
+}
+
+async function onPeriodoAtualizado() {
+  await carregarPeriodos(periodoAtivoId.value);
 }
 
 watch(
@@ -279,10 +336,12 @@ onMounted(async () => {
   await carregarCategorias();
   await carregarPeriodos();
   document.addEventListener("click", handleClickFora);
+  document.addEventListener("keydown", handleTecladoDatagrid);
 });
 
 onUnmounted(() => {
   document.removeEventListener("click", handleClickFora);
+  document.removeEventListener("keydown", handleTecladoDatagrid);
 });
 </script>
 
@@ -344,7 +403,11 @@ onUnmounted(() => {
                 <button class="dropdown-item" @click="abrirModalNovoPeriodo">
                   Novo período
                 </button>
-                <button class="dropdown-item" :disabled="!periodoAtivo">
+                <button
+                  class="dropdown-item"
+                  :disabled="!periodoAtivo"
+                  @click="abrirModalEditarPeriodo"
+                >
                   Editar período
                 </button>
                 <div class="dropdown-separator"></div>
@@ -429,7 +492,10 @@ onUnmounted(() => {
             <div
               v-for="l in lancamentosComSaldo"
               :key="l.id"
+              :data-id="l.id"
               class="grade-linha linha-lancamento"
+              :class="{ 'linha-selecionada': l.id === linhaSelecionadaId }"
+              @click="selecionarLinha(l)"
               @dblclick="abrirModalLancamento(l)"
             >
               <div class="cel-drag handle">⠿</div>
@@ -460,21 +526,7 @@ onUnmounted(() => {
                   title="Ver"
                   @click.stop="abrirModalLancamento(l)"
                 >
-                  👁
-                </button>
-                <button
-                  class="btn-acao"
-                  title="Editar"
-                  @click.stop="abrirModalLancamento(l)"
-                >
-                  ✏
-                </button>
-                <button
-                  class="btn-acao btn-excluir"
-                  title="Excluir"
-                  @click.stop="abrirModalLancamento(l)"
-                >
-                  🗑
+                  <Eye :size="20" />
                 </button>
               </div>
             </div>
@@ -518,8 +570,10 @@ onUnmounted(() => {
 
   <ModalNovoPeriodo
     v-if="modalNovoPeriodoAberto"
+    :periodo="periodoParaEditar"
     @fechar="fecharModalNovoPeriodo"
     @criado="onPeriodoCriado"
+    @atualizado="onPeriodoAtualizado"
   />
 
   <ModalNovoLancamento
@@ -917,6 +971,14 @@ onUnmounted(() => {
   background-color: var(--cor-menu-hover);
 }
 
+.linha-selecionada {
+  background-color: #1a3a5a;
+}
+
+.linha-selecionada:hover {
+  background-color: #1e4268;
+}
+
 .linha-ghost {
   opacity: 0.4;
   background-color: var(--cor-menu-hover);
@@ -980,10 +1042,11 @@ onUnmounted(() => {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 13px;
   color: var(--cor-texto-fraco);
-  padding: 2px;
+  padding: 4px;
   opacity: 0.6;
+  display: flex;
+  align-items: center;
 }
 
 .btn-acao:hover {
