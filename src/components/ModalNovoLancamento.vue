@@ -8,6 +8,8 @@ import AppToggle from './AppToggle.vue'
 
 const props = defineProps({
   periodoId: { type: Number, required: true },
+  tipo:      { type: String, default: 'direto' },  // 'direto' | 'indireto'
+  pessoaId:  { type: Number, default: null },       // pré-selecionada nos indiretos
 })
 
 const emit = defineEmits(['fechar', 'criado'])
@@ -43,10 +45,13 @@ async function carregarDados() {
   try {
     const banco = await getDb()
 
+    const filtroDisp = props.tipo === 'indireto'
+      ? `('indireto','ambos')`
+      : `('direto','ambos')`
     categorias.value = await banco.select(
       `SELECT id, nome FROM categoria
-        WHERE deletado_em IS NULL AND ativa = 1
-          AND disponivel_em IN ('direto','ambos')
+        WHERE deletado_em IS NULL AND ativa = 1 AND tipo != 'sistema'
+          AND disponivel_em IN ${filtroDisp}
         ORDER BY nome`
     )
 
@@ -78,7 +83,7 @@ const form = ref({
   data:            dataHoje,
   categoria_id:    '',
   descricao:       '',
-  pessoa_id:       '',
+  pessoa_id:       props.pessoaId ? String(props.pessoaId) : '',
   valor:           '',
   forma_pagamento: '',
 })
@@ -110,6 +115,8 @@ function validar() {
   if (!form.value.categoria_id) e.categoria_id = 'Selecione a categoria'
   if (!form.value.descricao.trim()) e.descricao = 'Informe a descrição'
   if (form.value.valor === '') e.valor = 'Informe o valor'
+  if (props.tipo === 'indireto' && !props.pessoaId && !form.value.pessoa_id)
+    e.pessoa_id = 'Selecione o curador'
   erros.value = e
   return Object.keys(e).length === 0
 }
@@ -119,7 +126,7 @@ function resetarForm() {
     data:            form.value.data,
     categoria_id:    '',
     descricao:       '',
-    pessoa_id:       '',
+    pessoa_id:       props.pessoaId ? String(props.pessoaId) : '',
     valor:           '',
     forma_pagamento: '',
   }
@@ -137,19 +144,22 @@ async function salvar() {
   try {
     const banco = await getDb()
 
+    // Nos indiretos, ordem começa em 3 (0,1,2 são linhas fixas)
+    // A constraint UNIQUE(periodo_id, tipo, ordem) é global — não filtra por pessoa
+    const ordemMin = props.tipo === 'indireto' ? 3 : 0
     const res = await banco.select(
-      `SELECT COALESCE(MAX(ordem), 0) + 1 AS proxima
+      `SELECT COALESCE(MAX(ordem), ?) + 1 AS proxima
          FROM lancamento
-        WHERE periodo_id = ? AND tipo = 'direto' AND deletado_em IS NULL`,
-      [props.periodoId]
+        WHERE periodo_id = ? AND tipo = ? AND deletado_em IS NULL`,
+      [ordemMin - 1, props.periodoId, props.tipo]
     )
-    const proxima = res[0].proxima
+    const proxima = Math.max(res[0].proxima, ordemMin)
 
     const result = await banco.execute(
       `INSERT INTO lancamento
          (periodo_id, categoria_id, conta_id, pessoa_id, data, descricao,
           tipo, valor, forma_pagamento, ordem)
-       VALUES (?, ?, ?, ?, ?, ?, 'direto', ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         props.periodoId,
         parseInt(form.value.categoria_id),
@@ -157,6 +167,7 @@ async function salvar() {
         form.value.pessoa_id ? parseInt(form.value.pessoa_id) : null,
         dataParaIso(form.value.data),
         form.value.descricao.trim(),
+        props.tipo,
         valorNumerico(),
         form.value.forma_pagamento || null,
         proxima,
@@ -183,7 +194,7 @@ onMounted(carregarDados)
 
 <template>
   <AppModal
-    titulo="Novo Lançamento"
+    :titulo="tipo === 'indireto' ? 'Novo Lançamento Indireto' : 'Novo Lançamento'"
     texto-confirmar="Salvar"
     largura="460px"
     @fechar="emit('fechar')"
@@ -222,11 +233,12 @@ onMounted(carregarDados)
     <!-- Responsável -->
     <div class="campo">
       <AppSelect
-        label="Responsável (opcional)"
+        :label="tipo === 'indireto' ? 'Curador' : 'Responsável (opcional)'"
         v-model="form.pessoa_id"
         :options="opPessoas"
-        placeholder="Nenhum"
+        :placeholder="tipo === 'indireto' ? 'Selecione o curador' : 'Nenhum'"
       />
+      <span v-if="erros.pessoa_id" class="msg-erro">{{ erros.pessoa_id }}</span>
     </div>
 
     <!-- Valor + Forma de pagamento -->

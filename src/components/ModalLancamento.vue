@@ -100,10 +100,13 @@ function isoParaDisplay(iso) {
 async function carregarDados() {
   try {
     const banco = await getDb()
+    const filtroDisp = props.lancamento.tipo === 'indireto'
+      ? `('indireto','ambos')`
+      : `('direto','ambos')`
     categorias.value = await banco.select(
       `SELECT id, nome FROM categoria
-        WHERE deletado_em IS NULL AND ativa = 1
-          AND disponivel_em IN ('direto','ambos')
+        WHERE deletado_em IS NULL AND ativa = 1 AND tipo != 'sistema'
+          AND disponivel_em IN ${filtroDisp}
         ORDER BY nome`
     )
     pessoas.value = await banco.select(

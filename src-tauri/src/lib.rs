@@ -21,6 +21,12 @@ pub fn run() {
             sql: include_str!("../schema_v2.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 3,
+            description: "categoria_tipo_sistema_e_categorias_fixas",
+            sql: include_str!("../schema_v3.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
