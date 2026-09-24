@@ -7,6 +7,7 @@ import { VueDraggable } from "vue-draggable-plus";
 import ModalNovoPeriodo from "../components/ModalNovoPeriodo.vue";
 import ModalNovoLancamento from "../components/ModalNovoLancamento.vue";
 import ModalLancamento from "../components/ModalLancamento.vue";
+import ModalConciliar from "../components/ModalConciliar.vue";
 
 const route = useRoute();
 
@@ -295,7 +296,27 @@ async function onLancamentoCriado() {
   await carregarLancamentos();
 }
 
-// ── Modal Novo / Editar Período ───────────────────────────
+// ── Modal Conciliar / Desconciliar ────────────────────────
+const modalConciliarAberto = ref(false);
+const modoConciliar = ref('conciliar');
+
+function abrirModalConciliar(modo) {
+  modoConciliar.value = modo;
+  modalConciliarAberto.value = true;
+  fecharMenuPeriodos();
+}
+
+function fecharModalConciliar() {
+  modalConciliarAberto.value = false;
+}
+
+async function onConciliado() {
+  await carregarPeriodos(periodoAtivoId.value);
+}
+
+async function onDesconciliado() {
+  await carregarPeriodos(periodoAtivoId.value);
+}
 const modalNovoPeriodoAberto = ref(false);
 const periodoParaEditar = ref(null);
 
@@ -414,6 +435,7 @@ onUnmounted(() => {
                 <button
                   class="dropdown-item"
                   :disabled="!periodoAtivo || periodoAtivo?.status !== 'aberto'"
+                  @click="abrirModalConciliar('conciliar')"
                 >
                   Conciliar
                 </button>
@@ -422,6 +444,7 @@ onUnmounted(() => {
                   :disabled="
                     !periodoAtivo || periodoAtivo?.status !== 'conciliado'
                   "
+                  @click="abrirModalConciliar('desconciliar')"
                 >
                   Desconciliar
                 </button>
@@ -566,6 +589,15 @@ onUnmounted(() => {
     @fechar="fecharModalLancamento"
     @atualizado="onLancamentoAtualizado"
     @excluido="onLancamentoExcluido"
+  />
+
+  <ModalConciliar
+    v-if="modalConciliarAberto && periodoAtivo"
+    :periodo="periodoAtivo"
+    :modo="modoConciliar"
+    @fechar="fecharModalConciliar"
+    @conciliado="onConciliado"
+    @desconciliado="onDesconciliado"
   />
 
   <ModalNovoPeriodo
