@@ -8,7 +8,7 @@ This template should help get you started developing with Tauri + Vue 3 in Vite.
 
 CPFs válidos de exemplo
 111.444.777-35
-123.456.789-0912345678909
+123.456.789-09
 489.930.068-90
 834.972.199-59
 164.056.076-90

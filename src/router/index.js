@@ -35,6 +35,11 @@ const routes = [
     name: "lancamentos-indiretos",
     component: () => import("../views/LancamentosIndiretosView.vue"),
   },
+  {
+    path: "/comprovantes",
+    name: "comprovantes",
+    component: () => import("../views/ComprovantesView.vue"),
+  },
 ];
 
 const router = createRouter({

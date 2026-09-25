@@ -1,5 +1,6 @@
 <script setup>
 import AppMenu from "./components/AppMenu.vue";
+import AppToolbar from "./components/AppToolbar.vue";
 import { exit } from "@tauri-apps/plugin-process";
 import router from "./router/index.js";
 
@@ -25,8 +26,10 @@ async function sair() {
       @periodo:diretos="router.push('/lancamentos/diretos')"
       @periodo:indiretos="router.push('/lancamentos/indiretos')"
       @periodo:conciliar="() => {}"
-      @comprovantes:inbox="() => {}"
-      @comprovantes:disponiveis="() => {}"
+      @comprovantes:inbox="router.push('/comprovantes?filtro=inbox')"
+      @comprovantes:disponiveis="
+        router.push('/comprovantes?filtro=disponiveis')
+      "
       @cadastros:pessoas="router.push('/cadastros/pessoas')"
       @cadastros:contas="router.push('/cadastros/contas')"
       @cadastros:categorias="router.push('/cadastros/categorias')"
@@ -35,6 +38,9 @@ async function sair() {
       @configuracoes:geral="() => {}"
       @configuracoes:pastas="() => {}"
     />
+
+    <!-- Toolbar -->
+    <AppToolbar />
 
     <!-- Área de conteúdo -->
     <main class="conteudo">
