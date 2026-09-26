@@ -5,23 +5,66 @@ import { exit } from "@tauri-apps/plugin-process";
 import router from "./router/index.js";
 import { onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import Database from "@tauri-apps/plugin-sql";
+
+let db = null;
+async function getDb() {
+  if (!db) db = await Database.load("sqlite:mina.db");
+  return db;
+}
+
+async function inserirSeNaoExistir(caminho) {
+  const nome = caminho.split("/").pop() ?? caminho;
+  try {
+    const banco = await getDb();
+    await banco.execute(
+      `INSERT INTO comprovante (nome, status, caminho_arquivo, hash_arquivo, caminho_relativo)
+       SELECT $1, 'inbox', $2, $2, $2
+       WHERE NOT EXISTS (
+         SELECT 1 FROM comprovante WHERE caminho_arquivo = $2
+       )`,
+      [nome, caminho]
+    );
+  } catch (e) {
+    console.error("Erro ao inserir comprovante:", e);
+  }
+}
+
+async function importarArquivosDaPasta(path) {
+  try {
+    const arquivos = await invoke("escanear_pasta", { path });
+    for (const caminho of arquivos) {
+      await inserirSeNaoExistir(caminho);
+    }
+  } catch (e) {
+    console.error("Erro ao escanear pasta:", e);
+  }
+}
 
 onMounted(async () => {
   try {
-    const db = await Database.load("sqlite:mina.db");
-    const rows = await db.select(
-      "SELECT pasta_raiz_comprovantes FROM configuracao WHERE id = 1",
+    const banco = await getDb();
+    const rows = await banco.select(
+      "SELECT pasta_raiz_comprovantes FROM configuracao WHERE id = 1"
     );
     if (rows.length > 0 && rows[0].pasta_raiz_comprovantes) {
-      await invoke("iniciar_watcher", {
-        path: rows[0].pasta_raiz_comprovantes,
-      });
+      const path = rows[0].pasta_raiz_comprovantes;
+      await invoke("iniciar_watcher", { path });
+      await importarArquivosDaPasta(path);
     }
   } catch (e) {
-    // banco ainda sem configuração — normal na primeira execução
     console.log("Configuração de pasta ainda não definida.");
   }
+
+  // Escuta novos arquivos detectados pelo watcher em tempo real
+  await listen("comprovante:novo", async (event) => {
+    const caminho = event.payload;
+    const ext = caminho.split(".").pop()?.toLowerCase() ?? "";
+    if (["pdf", "png", "jpg", "jpeg"].includes(ext)) {
+      await inserirSeNaoExistir(caminho);
+    }
+  });
 });
 
 async function sair() {
