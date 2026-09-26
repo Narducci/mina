@@ -3,6 +3,26 @@ import AppMenu from "./components/AppMenu.vue";
 import AppToolbar from "./components/AppToolbar.vue";
 import { exit } from "@tauri-apps/plugin-process";
 import router from "./router/index.js";
+import { onMounted } from "vue";
+import { invoke } from "@tauri-apps/api/core";
+import Database from "@tauri-apps/plugin-sql";
+
+onMounted(async () => {
+  try {
+    const db = await Database.load("sqlite:mina.db");
+    const rows = await db.select(
+      "SELECT pasta_raiz_comprovantes FROM configuracao WHERE id = 1",
+    );
+    if (rows.length > 0 && rows[0].pasta_raiz_comprovantes) {
+      await invoke("iniciar_watcher", {
+        path: rows[0].pasta_raiz_comprovantes,
+      });
+    }
+  } catch (e) {
+    // banco ainda sem configuração — normal na primeira execução
+    console.log("Configuração de pasta ainda não definida.");
+  }
+});
 
 async function sair() {
   await exit(0);
@@ -35,8 +55,8 @@ async function sair() {
       @cadastros:categorias="router.push('/cadastros/categorias')"
       @cadastros:ativar-conta="router.push('/cadastros/ativar-conta')"
       @relatorios:prestacao="() => {}"
-      @configuracoes:geral="() => {}"
-      @configuracoes:pastas="() => {}"
+      @configuracoes:geral="router.push('/configuracoes')"
+      @configuracoes:pastas="router.push('/configuracoes')"
     />
 
     <!-- Toolbar -->

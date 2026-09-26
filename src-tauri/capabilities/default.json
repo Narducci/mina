@@ -11,6 +11,7 @@
     "sql:allow-load",
     "sql:allow-select",
     "process:default",
-    "process:allow-exit"
+    "process:allow-exit",
+    "dialog:allow-open"
   ]
 }

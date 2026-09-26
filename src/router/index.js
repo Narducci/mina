@@ -40,6 +40,11 @@ const routes = [
     name: "comprovantes",
     component: () => import("../views/ComprovantesView.vue"),
   },
+  {
+    path: "/configuracoes",
+    name: "configuracoes",
+    component: () => import("../views/ConfiguracoesView.vue"),
+  },
 ];
 
 const router = createRouter({

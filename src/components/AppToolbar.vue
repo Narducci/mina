@@ -1,6 +1,6 @@
 <script setup>
 import { useToolbarStore } from "../stores/toolbar.js";
-import { FolderOpen, Trash2, Eye } from "@lucide/vue";
+import { FolderOpen, Trash2, Eye, EyeOff } from "@lucide/vue";
 
 const toolbar = useToolbarStore();
 
@@ -40,12 +40,13 @@ function clicarExibir() {
       </button>
       <button
         class="toolbar-btn"
-        :class="{ ativo: toolbar.exibirPdf }"
+        :class="{ ativo: toolbar.exibirPdf, habilitado: toolbar.exibirAtivo }"
         :disabled="!toolbar.exibirAtivo"
         @click="clicarExibir"
       >
-        <Eye :size="15" />
-        <span>Exibir</span>
+        <EyeOff v-if="toolbar.exibirPdf" :size="15" />
+        <Eye v-else :size="15" />
+        <span>{{ toolbar.exibirPdf ? "Fechar" : "Exibir" }}</span>
       </button>
     </div>
 
@@ -109,6 +110,11 @@ function clicarExibir() {
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
+  transition:
+    background-color 0.15s,
+    color 0.15s,
+    border-color 0.15s,
+    opacity 0.15s;
 }
 
 .toolbar-btn:hover:not(:disabled) {
@@ -122,9 +128,15 @@ function clicarExibir() {
   cursor: default;
 }
 
+.toolbar-btn.habilitado {
+  color: #4a9eff;
+}
+
 .toolbar-btn.ativo {
   background-color: var(--cor-selecao);
   color: var(--cor-texto-forte);
+  border-color: #4a9eff;
+  opacity: 1;
 }
 
 .toolbar-sep {
