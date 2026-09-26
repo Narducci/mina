@@ -1,7 +1,14 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useToolbarStore } from "../stores/toolbar.js";
-import { PanelRightClose, PanelRightOpen, Search, Pencil, Archive, Trash2 } from "@lucide/vue";
+import {
+  PanelRightClose,
+  PanelRightOpen,
+  Search,
+  Pencil,
+  Archive,
+  Trash2,
+} from "@lucide/vue";
 import Database from "@tauri-apps/plugin-sql";
 
 const toolbar = useToolbarStore();
@@ -9,6 +16,16 @@ const sidePanelAberto = ref(false);
 const comprovantes = ref([]);
 const termoBusca = ref("");
 const linhaSelecionadaId = ref(null);
+
+const abaAtiva = ref("identificar");
+const form = ref({
+  nome: "",
+  descricao: "",
+  numero_documento: "",
+  data_documento: "",
+  status: "inbox",
+});
+const salvando = ref(false);
 
 let db = null;
 async function getDb() {
@@ -19,9 +36,10 @@ async function getDb() {
 async function carregarComprovantes() {
   try {
     const banco = await getDb();
-    const filtroSql = toolbar.filtro === "todos"
-      ? ""
-      : `AND c.status = '${toolbar.filtro === "inbox" ? "inbox" : "disponivel"}'`;
+    const filtroSql =
+      toolbar.filtro === "todos"
+        ? ""
+        : `AND c.status = '${toolbar.filtro === "inbox" ? "inbox" : "disponivel"}'`;
 
     comprovantes.value = await banco.select(`
       SELECT c.id, c.nome, c.descricao, c.numero_documento,
@@ -38,6 +56,41 @@ async function carregarComprovantes() {
   }
 }
 
+async function carregarDetalhe(id) {
+  if (!id) return;
+  const banco = await getDb();
+  const rows = await banco.select(
+    "SELECT nome, descricao, numero_documento, data_documento, status FROM comprovante WHERE id = $1",
+    [id],
+  );
+  if (rows[0]) Object.assign(form.value, rows[0]);
+}
+
+async function salvarIdentificacao() {
+  if (!linhaSelecionadaId.value) return;
+  salvando.value = true;
+  try {
+    const banco = await getDb();
+    await banco.execute(
+      `UPDATE comprovante
+         SET nome = $1, descricao = $2, numero_documento = $3,
+             data_documento = $4, status = $5
+       WHERE id = $6`,
+      [
+        form.value.nome,
+        form.value.descricao,
+        form.value.numero_documento,
+        form.value.data_documento,
+        form.value.status,
+        linhaSelecionadaId.value,
+      ],
+    );
+    await carregarComprovantes();
+  } finally {
+    salvando.value = false;
+  }
+}
+
 const compovantesFiltrados = computed(() => {
   const termo = termoBusca.value.trim().toLowerCase();
   if (!termo) return comprovantes.value;
@@ -45,7 +98,7 @@ const compovantesFiltrados = computed(() => {
     (c) =>
       (c.nome ?? "").toLowerCase().includes(termo) ||
       (c.descricao ?? "").toLowerCase().includes(termo) ||
-      (c.numero_documento ?? "").toLowerCase().includes(termo)
+      (c.numero_documento ?? "").toLowerCase().includes(termo),
   );
 });
 
@@ -57,6 +110,7 @@ function formatarData(iso) {
 
 function selecionarLinha(c) {
   linhaSelecionadaId.value = c.id;
+  carregarDetalhe(c.id);
 }
 
 function handleTeclado(e) {
@@ -78,6 +132,7 @@ function handleTeclado(e) {
       novo = lista[idx - 1];
     }
     linhaSelecionadaId.value = novo.id;
+    carregarDetalhe(novo.id);
     const el = document.querySelector(`[data-id="${novo.id}"]`);
     el?.scrollIntoView({ block: "nearest" });
   }
@@ -93,10 +148,13 @@ watch(linhaSelecionadaId, (id) => {
   if (id === null) toolbar.exibirPdf = false;
 });
 
-watch(() => toolbar.filtro, () => {
-  linhaSelecionadaId.value = null;
-  carregarComprovantes();
-});
+watch(
+  () => toolbar.filtro,
+  () => {
+    linhaSelecionadaId.value = null;
+    carregarComprovantes();
+  },
+);
 
 onMounted(async () => {
   toolbar.ativarComprovantes({
@@ -120,10 +178,8 @@ onUnmounted(() => {
   <div class="main-panel">
     <div class="shell">
       <div class="area-central">
-
         <!-- Conteúdo principal -->
         <div class="conteudo-principal">
-
           <!-- Painel superior -->
           <div class="painel-superior">
             <div class="busca-wrapper">
@@ -138,7 +194,9 @@ onUnmounted(() => {
                 v-if="termoBusca"
                 class="busca-limpar"
                 @click="termoBusca = ''"
-              >✕</button>
+              >
+                ✕
+              </button>
             </div>
           </div>
 
@@ -162,20 +220,28 @@ onUnmounted(() => {
               @click="selecionarLinha(c)"
             >
               <div class="col-nome">
-                <span class="nome-arquivo">{{ c.numero_documento ? `${c.numero_documento}-${c.nome}` : c.nome }}</span>
+                <span class="nome-arquivo">{{
+                  c.numero_documento
+                    ? `${c.numero_documento}-${c.nome}`
+                    : c.nome
+                }}</span>
                 <span class="descricao">{{ c.descricao }}</span>
               </div>
               <div class="col-cat">{{ c.total_categorias }}</div>
               <div class="col-data">{{ formatarData(c.data_documento) }}</div>
               <div class="col-status">
                 <span class="badge" :class="c.status">
-                  {{ c.status === 'inbox' ? 'Inbox' : 'Disponível' }}
+                  {{ c.status === "inbox" ? "Inbox" : "Disponível" }}
                 </span>
               </div>
               <div class="col-acoes">
                 <button class="btn-acao"><Pencil :size="13" /></button>
-                <button class="btn-acao" v-if="c.status === 'inbox'"><Archive :size="13" /></button>
-                <button class="btn-acao btn-excluir"><Trash2 :size="13" /></button>
+                <button class="btn-acao" v-if="c.status === 'inbox'">
+                  <Archive :size="13" />
+                </button>
+                <button class="btn-acao btn-excluir">
+                  <Trash2 :size="13" />
+                </button>
               </div>
             </div>
 
@@ -187,26 +253,85 @@ onUnmounted(() => {
           <!-- Painel inferior -->
           <div class="painel-inferior">
             <span class="rodape-contador">
-              {{ compovantesFiltrados.length }} documento{{ compovantesFiltrados.length !== 1 ? 's' : '' }}
+              {{ compovantesFiltrados.length }} documento{{
+                compovantesFiltrados.length !== 1 ? "s" : ""
+              }}
             </span>
           </div>
-
         </div>
 
         <!-- Side panel -->
         <div class="side-panel" :class="{ aberto: sidePanelAberto }">
           <div class="side-panel-cabecalho">
-            <span v-if="sidePanelAberto">Editar Documento</span>
+            <div v-if="sidePanelAberto" class="abas">
+              <button
+                class="aba"
+                :class="{ ativa: abaAtiva === 'identificar' }"
+                @click="abaAtiva = 'identificar'"
+              >
+                Identificar
+              </button>
+            </div>
             <button class="btn-toggle-panel" @click="alternarSidePanel">
               <PanelRightClose v-if="sidePanelAberto" :size="16" />
               <PanelRightOpen v-else :size="16" />
             </button>
           </div>
+
           <div v-if="sidePanelAberto" class="side-panel-corpo">
-            <!-- conteúdo virá aqui -->
+            <!-- Aba: Identificar -->
+            <template v-if="abaAtiva === 'identificar'">
+              <div v-if="!linhaSelecionadaId" class="painel-vazio">
+                Selecione um comprovante na lista.
+              </div>
+              <div v-else class="form-identificar">
+                <div class="campo">
+                  <label>Nome do arquivo</label>
+                  <input v-model="form.nome" type="text" />
+                </div>
+
+                <div class="campo">
+                  <label>Número do documento</label>
+                  <input
+                    v-model="form.numero_documento"
+                    type="text"
+                    placeholder="Ex: NF-001"
+                  />
+                </div>
+
+                <div class="campo">
+                  <label>Descrição</label>
+                  <textarea
+                    v-model="form.descricao"
+                    rows="3"
+                    placeholder="Descrição opcional…"
+                  />
+                </div>
+
+                <div class="campo">
+                  <label>Data do documento</label>
+                  <input v-model="form.data_documento" type="date" />
+                </div>
+
+                <div class="campo">
+                  <label>Status</label>
+                  <select v-model="form.status">
+                    <option value="inbox">Inbox</option>
+                    <option value="disponivel">Disponível</option>
+                  </select>
+                </div>
+
+                <button
+                  class="btn-salvar"
+                  :disabled="salvando"
+                  @click="salvarIdentificacao"
+                >
+                  {{ salvando ? "Salvando…" : "Salvar" }}
+                </button>
+              </div>
+            </template>
           </div>
         </div>
-
       </div>
     </div>
   </div>
@@ -444,12 +569,10 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 8px;
+  padding: 0 8px;
   border-bottom: 1px solid var(--cor-borda);
   flex-shrink: 0;
-  font-size: 12px;
-  font-weight: bold;
-  color: var(--cor-texto-forte);
+  min-height: 34px;
   white-space: nowrap;
 }
 
@@ -461,6 +584,7 @@ onUnmounted(() => {
   padding: 2px;
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .btn-toggle-panel:hover {
@@ -470,7 +594,7 @@ onUnmounted(() => {
 .side-panel-corpo {
   flex: 1;
   overflow-y: auto;
-  padding: 10px;
+  padding: 12px;
 }
 
 /* Estado vazio */
@@ -481,5 +605,104 @@ onUnmounted(() => {
   height: 100%;
   color: var(--cor-texto-fraco);
   font-size: 13px;
+}
+
+/* Abas do side panel */
+.abas {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+}
+
+.aba {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--cor-texto-fraco);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px 3px;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.aba.ativa {
+  color: var(--cor-texto-forte);
+  border-bottom-color: #4a9eff;
+}
+
+/* Formulário Identificar */
+.painel-vazio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--cor-texto-fraco);
+  font-size: 12px;
+  text-align: center;
+}
+
+.form-identificar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.campo label {
+  font-size: 10px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--cor-texto-fraco);
+}
+
+.campo input,
+.campo textarea,
+.campo select {
+  background-color: #111;
+  border: 1px solid var(--cor-borda);
+  border-radius: 4px;
+  color: var(--cor-texto-forte);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  outline: none;
+  resize: vertical;
+}
+
+.campo input:focus,
+.campo textarea:focus,
+.campo select:focus {
+  border-color: #4a9eff;
+}
+
+.btn-salvar {
+  margin-top: 4px;
+  background-color: #1a4a7a;
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px;
+  transition: background-color 0.15s;
+}
+
+.btn-salvar:hover:not(:disabled) {
+  background-color: #1e5a94;
+}
+
+.btn-salvar:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 </style>
