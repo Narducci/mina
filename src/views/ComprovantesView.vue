@@ -1,15 +1,10 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useToolbarStore } from "../stores/toolbar.js";
-import {
-  PanelRightClose,
-  PanelRightOpen,
-  Search,
-  Pencil,
-  Archive,
-  Trash2,
-} from "@lucide/vue";
+import { PanelRightClose, PanelRightOpen, Search, Pencil, Archive, Trash2, Bell } from "@lucide/vue";
 import Database from "@tauri-apps/plugin-sql";
+import AppSelect from "../components/AppSelect.vue";
+import { convertFileSrc } from "@tauri-apps/api/core";
 
 const toolbar = useToolbarStore();
 const sidePanelAberto = ref(false);
@@ -20,12 +15,17 @@ const linhaSelecionadaId = ref(null);
 const abaAtiva = ref("identificar");
 const form = ref({
   nome: "",
+  nome_curto: "",
   descricao: "",
   numero_documento: "",
+  sem_numero: false,
   data_documento: "",
-  status: "inbox",
 });
 const salvando = ref(false);
+
+const totalInbox = computed(() =>
+  comprovantes.value.filter((c) => c.status === "inbox").length
+);
 
 let db = null;
 async function getDb() {
@@ -36,34 +36,89 @@ async function getDb() {
 async function carregarComprovantes() {
   try {
     const banco = await getDb();
-    const filtroSql =
-      toolbar.filtro === "todos"
-        ? ""
-        : `AND c.status = '${toolbar.filtro === "inbox" ? "inbox" : "disponivel"}'`;
+    const filtroSql = toolbar.filtro === "todos"
+      ? ""
+      : `AND c.status = '${toolbar.filtro === "inbox" ? "inbox" : "disponivel"}'`;
 
     comprovantes.value = await banco.select(`
-      SELECT c.id, c.nome, c.descricao, c.numero_documento,
-             c.data_documento, c.status,
+      SELECT c.id, c.nome, c.nome_curto, c.descricao, c.numero_documento,
+             c.data_documento, c.status, c.caminho_arquivo,
              COUNT(cc.categoria_id) as total_categorias
       FROM comprovante c
       LEFT JOIN comprovante_categoria cc ON cc.comprovante_id = c.id
       WHERE c.deletado_em IS NULL ${filtroSql}
       GROUP BY c.id
-      ORDER BY c.data_documento DESC
+      ORDER BY c.data_documento DESC NULLS LAST, c.id DESC
     `);
   } catch (err) {
     console.error("Erro ao carregar comprovantes:", err);
   }
 }
 
+function isoParaBr(iso) {
+  if (!iso) return "";
+  const [a, m, d] = iso.split("-");
+  if (!d) return iso;
+  return `${d}/${m}/${a}`;
+}
+
+function brParaIso(br) {
+  if (!br) return "";
+  const [d, m, a] = br.split("/");
+  if (!a) return br;
+  return `${a}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+}
+
 async function carregarDetalhe(id) {
   if (!id) return;
   const banco = await getDb();
   const rows = await banco.select(
-    "SELECT nome, descricao, numero_documento, data_documento, status FROM comprovante WHERE id = $1",
-    [id],
+    `SELECT nome, nome_curto, descricao, numero_documento, data_documento
+     FROM comprovante WHERE id = $1`,
+    [id]
   );
-  if (rows[0]) Object.assign(form.value, rows[0]);
+  if (rows[0]) {
+    const r = rows[0];
+    Object.assign(form.value, {
+      nome: r.nome ?? "",
+      nome_curto: r.nome_curto ?? "",
+      descricao: r.descricao ?? "",
+      numero_documento: r.numero_documento ?? "",
+      sem_numero: false,
+      data_documento: isoParaBr(r.data_documento),
+    });
+  }
+}
+
+// Preview do nome normalizado em tempo real
+const nomeNormalizado = computed(() => {
+  const ext = (form.value.nome ?? "").includes(".")
+    ? form.value.nome.split(".").pop()
+    : "";
+
+  let num;
+  if (form.value.sem_numero) {
+    num = "S????????";
+  } else {
+    const n = (form.value.numero_documento ?? "").trim();
+    num = n ? n.padStart(9, "0").slice(0, 9) : "_________";
+  }
+
+  const nomeC = (form.value.nome_curto ?? "").trim().replace(/\s+/g, "-") || "_______";
+  return `${num}_${nomeC}${ext ? "." + ext : ""}`;
+});
+
+function onSemNumero() {
+  if (form.value.sem_numero) {
+    form.value.numero_documento = "";
+  }
+}
+
+async function gerarNumeroSequencial(banco) {
+  const rows = await banco.select("SELECT proximo FROM seq_documento WHERE id = 1");
+  const proximo = rows[0]?.proximo ?? 1;
+  await banco.execute("UPDATE seq_documento SET proximo = proximo + 1 WHERE id = 1");
+  return "S" + String(proximo).padStart(8, "0");
 }
 
 async function salvarIdentificacao() {
@@ -71,24 +126,66 @@ async function salvarIdentificacao() {
   salvando.value = true;
   try {
     const banco = await getDb();
+
+    let numero = form.value.numero_documento.trim();
+
+    if (form.value.sem_numero) {
+      numero = await gerarNumeroSequencial(banco);
+      form.value.numero_documento = numero;
+      form.value.sem_numero = false;
+    } else if (numero) {
+      numero = numero.padStart(9, "0").slice(0, 9);
+      form.value.numero_documento = numero;
+    }
+
     await banco.execute(
       `UPDATE comprovante
-         SET nome = $1, descricao = $2, numero_documento = $3,
-             data_documento = $4, status = $5
-       WHERE id = $6`,
+         SET nome_curto = $1, descricao = $2, numero_documento = $3,
+             data_documento = $4
+       WHERE id = $5`,
       [
-        form.value.nome,
-        form.value.descricao,
-        form.value.numero_documento,
-        form.value.data_documento,
-        form.value.status,
+        form.value.nome_curto || null,
+        form.value.descricao || null,
+        numero || null,
+        brParaIso(form.value.data_documento) || null,
         linhaSelecionadaId.value,
-      ],
+      ]
     );
     await carregarComprovantes();
   } finally {
     salvando.value = false;
   }
+}
+
+async function arquivarLinha(id, event) {
+  event.stopPropagation();
+  const banco = await getDb();
+  await banco.execute(
+    "UPDATE comprovante SET status = 'disponivel' WHERE id = $1",
+    [id]
+  );
+  await carregarComprovantes();
+}
+
+async function excluirLinha(id, event) {
+  event.stopPropagation();
+  const banco = await getDb();
+  await banco.execute(
+    "UPDATE comprovante SET deletado_em = datetime('now') WHERE id = $1",
+    [id]
+  );
+  if (linhaSelecionadaId.value === id) linhaSelecionadaId.value = null;
+  await carregarComprovantes();
+}
+
+const pdfSrc = computed(() => {
+  if (!toolbar.exibirPdf) return null;
+  const c = comprovantes.value.find((x) => x.id === linhaSelecionadaId.value);
+  return c?.caminho_arquivo ? convertFileSrc(c.caminho_arquivo) : null;
+});
+
+function exibirArquivo() {
+  toolbar.exibirPdf = !toolbar.exibirPdf;
 }
 
 const compovantesFiltrados = computed(() => {
@@ -98,7 +195,7 @@ const compovantesFiltrados = computed(() => {
     (c) =>
       (c.nome ?? "").toLowerCase().includes(termo) ||
       (c.descricao ?? "").toLowerCase().includes(termo) ||
-      (c.numero_documento ?? "").toLowerCase().includes(termo),
+      (c.numero_documento ?? "").toLowerCase().includes(termo)
   );
 });
 
@@ -106,6 +203,28 @@ function formatarData(iso) {
   if (!iso) return "";
   const [a, m, d] = iso.split("-");
   return `${d}/${m}/${a}`;
+}
+
+function onDataInput(e) {
+  let v = e.target.value.replace(/\D/g, "");
+  if (v.length > 2) v = v.slice(0, 2) + "/" + v.slice(2);
+  if (v.length > 5) v = v.slice(0, 5) + "/" + v.slice(5);
+  if (v.length > 10) v = v.slice(0, 10);
+  form.value.data_documento = v;
+}
+
+function nomeExibicao(c) {
+  const ext = c.nome?.includes(".") ? c.nome.split(".").pop() : "";
+  const num = c.numero_documento || "";
+  const nome = (c.nome_curto || "").replace(/\s+/g, "-");
+  if (num && nome) return `${num}_${nome}${ext ? "." + ext : ""}`;
+  if (num) return `${num}${ext ? "." + ext : ""}`;
+  if (nome) return `${nome}${ext ? "." + ext : ""}`;
+  return c.nome || "";
+}
+
+function identificarCompleto(c) {
+  return !!(c.nome_curto && c.numero_documento && c.descricao && c.data_documento);
 }
 
 function selecionarLinha(c) {
@@ -142,27 +261,22 @@ function alternarSidePanel() {
   sidePanelAberto.value = !sidePanelAberto.value;
 }
 
-// Habilita/desabilita botão Exibir conforme seleção
 watch(linhaSelecionadaId, (id) => {
   toolbar.exibirAtivo = id !== null;
   if (id === null) toolbar.exibirPdf = false;
 });
 
-watch(
-  () => toolbar.filtro,
-  () => {
-    linhaSelecionadaId.value = null;
-    carregarComprovantes();
-  },
-);
+watch(() => toolbar.filtro, () => {
+  linhaSelecionadaId.value = null;
+  carregarComprovantes();
+});
 
 onMounted(async () => {
   toolbar.ativarComprovantes({
     importar: () => console.log("importar"),
-    excluir: () => console.log("excluir"),
-    exibir: (ativo) => console.log("exibir pdf:", ativo),
+    excluir: () => linhaSelecionadaId.value && excluirLinha(linhaSelecionadaId.value, { stopPropagation: () => {} }),
+    exibir: exibirArquivo,
   });
-  // Exibir começa desabilitado até selecionar uma linha
   toolbar.exibirAtivo = false;
   await carregarComprovantes();
   document.addEventListener("keydown", handleTeclado);
@@ -178,8 +292,10 @@ onUnmounted(() => {
   <div class="main-panel">
     <div class="shell">
       <div class="area-central">
+
         <!-- Conteúdo principal -->
         <div class="conteudo-principal">
+
           <!-- Painel superior -->
           <div class="painel-superior">
             <div class="busca-wrapper">
@@ -194,54 +310,63 @@ onUnmounted(() => {
                 v-if="termoBusca"
                 class="busca-limpar"
                 @click="termoBusca = ''"
-              >
-                ✕
-              </button>
+              >✕</button>
+            </div>
+
+            <div
+              v-if="totalInbox > 0"
+              class="sininho-wrapper"
+              :title="`${totalInbox} documento${totalInbox !== 1 ? 's' : ''} no Inbox`"
+            >
+              <Bell :size="18" class="sininho-icone" />
+              <span class="sininho-badge">{{ totalInbox > 99 ? '99+' : totalInbox }}</span>
             </div>
           </div>
 
           <!-- Cabeçalho datagrid -->
           <div class="datagrid-header">
             <span class="col-nome">Nome e Descrição</span>
-            <span class="col-cat">Categorias</span>
+            <span class="col-cat">Cat.</span>
             <span class="col-data">Data</span>
             <span class="col-status">Status</span>
             <span class="col-acoes">Ações</span>
           </div>
 
+          <!-- Visualizador de PDF -->
+          <iframe
+            v-if="toolbar.exibirPdf && pdfSrc"
+            :src="pdfSrc"
+            class="pdf-viewer"
+          />
+          <div v-else-if="toolbar.exibirPdf" class="pdf-sem-arquivo">
+            Nenhum arquivo associado a este comprovante.
+          </div>
+
           <!-- Linhas -->
-          <div class="datagrid-body">
+          <div v-else class="datagrid-body">
             <div
               v-for="c in compovantesFiltrados"
               :key="c.id"
               :data-id="c.id"
               class="linha"
-              :class="{ selecionada: c.id === linhaSelecionadaId }"
+              :class="{ selecionada: c.id === linhaSelecionadaId, 'em-exibicao': c.id === linhaSelecionadaId && toolbar.exibirPdf }"
               @click="selecionarLinha(c)"
             >
               <div class="col-nome">
-                <span class="nome-arquivo">{{
-                  c.numero_documento
-                    ? `${c.numero_documento}-${c.nome}`
-                    : c.nome
-                }}</span>
+                <span class="nome-arquivo">{{ nomeExibicao(c) }}</span>
                 <span class="descricao">{{ c.descricao }}</span>
               </div>
               <div class="col-cat">{{ c.total_categorias }}</div>
               <div class="col-data">{{ formatarData(c.data_documento) }}</div>
               <div class="col-status">
                 <span class="badge" :class="c.status">
-                  {{ c.status === "inbox" ? "Inbox" : "Disponível" }}
+                  {{ c.status === 'inbox' ? 'Inbox' : 'Disponível' }}
                 </span>
               </div>
               <div class="col-acoes">
-                <button class="btn-acao"><Pencil :size="13" /></button>
-                <button class="btn-acao" v-if="c.status === 'inbox'">
-                  <Archive :size="13" />
-                </button>
-                <button class="btn-acao btn-excluir">
-                  <Trash2 :size="13" />
-                </button>
+                <button class="btn-acao" title="Identificar" @click.stop="selecionarLinha(c); sidePanelAberto = true"><Pencil :size="13" /></button>
+                <button class="btn-acao" v-if="c.status === 'inbox'" title="Disponibilizar" :disabled="!identificarCompleto(c)" :class="{ 'btn-bloqueado': !identificarCompleto(c) }" @click="arquivarLinha(c.id, $event)"><Archive :size="13" /></button>
+                <button class="btn-acao btn-excluir" title="Excluir" @click="excluirLinha(c.id, $event)"><Trash2 :size="13" /></button>
               </div>
             </div>
 
@@ -253,11 +378,10 @@ onUnmounted(() => {
           <!-- Painel inferior -->
           <div class="painel-inferior">
             <span class="rodape-contador">
-              {{ compovantesFiltrados.length }} documento{{
-                compovantesFiltrados.length !== 1 ? "s" : ""
-              }}
+              {{ compovantesFiltrados.length }} documento{{ compovantesFiltrados.length !== 1 ? 's' : '' }}
             </span>
           </div>
+
         </div>
 
         <!-- Side panel -->
@@ -268,9 +392,7 @@ onUnmounted(() => {
                 class="aba"
                 :class="{ ativa: abaAtiva === 'identificar' }"
                 @click="abaAtiva = 'identificar'"
-              >
-                Identificar
-              </button>
+              >Identificar</button>
             </div>
             <button class="btn-toggle-panel" @click="alternarSidePanel">
               <PanelRightClose v-if="sidePanelAberto" :size="16" />
@@ -279,59 +401,73 @@ onUnmounted(() => {
           </div>
 
           <div v-if="sidePanelAberto" class="side-panel-corpo">
-            <!-- Aba: Identificar -->
+
             <template v-if="abaAtiva === 'identificar'">
               <div v-if="!linhaSelecionadaId" class="painel-vazio">
                 Selecione um comprovante na lista.
               </div>
               <div v-else class="form-identificar">
+
+                <!-- Nome do arquivo (read-only) -->
                 <div class="campo">
                   <label>Nome do arquivo</label>
-                  <input v-model="form.nome" type="text" />
+                  <div class="campo-readonly">{{ form.nome || '—' }}</div>
                 </div>
 
+                <!-- Número do documento -->
                 <div class="campo">
                   <label>Número do documento</label>
                   <input
                     v-model="form.numero_documento"
                     type="text"
+                    :disabled="form.sem_numero"
                     placeholder="Ex: NF-001"
+                    :class="{ desabilitado: form.sem_numero }"
                   />
+                  <label class="checkbox-label">
+                    <input
+                      type="checkbox"
+                      v-model="form.sem_numero"
+                      @change="onSemNumero"
+                    />
+                    Documento sem número
+                  </label>
                 </div>
 
+                <!-- Descrição -->
                 <div class="campo">
-                  <label>Descrição</label>
-                  <textarea
-                    v-model="form.descricao"
-                    rows="3"
-                    placeholder="Descrição opcional…"
-                  />
+                  <label>Descrição <span class="obrigatorio">*</span></label>
+                  <textarea v-model="form.descricao" rows="3" placeholder="Descrição do documento…" />
                 </div>
 
+                <!-- Data da Transação -->
                 <div class="campo">
-                  <label>Data do documento</label>
-                  <input v-model="form.data_documento" type="date" />
+                  <label>Data da Transação <span class="obrigatorio">*</span></label>
+                  <input v-model="form.data_documento" type="text" placeholder="DD/MM/AAAA" @input="onDataInput" />
                 </div>
 
+                <!-- Nome curto -->
                 <div class="campo">
-                  <label>Status</label>
-                  <select v-model="form.status">
-                    <option value="inbox">Inbox</option>
-                    <option value="disponivel">Disponível</option>
-                  </select>
+                  <label>Nome curto <span class="obrigatorio">*</span></label>
+                  <input v-model="form.nome_curto" type="text" placeholder="Ex: Aluguel Joao" />
                 </div>
 
-                <button
-                  class="btn-salvar"
-                  :disabled="salvando"
-                  @click="salvarIdentificacao"
-                >
+                <!-- Preview do nome normalizado -->
+                <div class="campo">
+                  <label>Nome normalizado</label>
+                  <div class="campo-preview" :title="nomeNormalizado">{{ nomeNormalizado }}</div>
+                </div>
+
+                <button class="btn-salvar" :disabled="salvando" @click="salvarIdentificacao">
                   {{ salvando ? "Salvando…" : "Salvar" }}
                 </button>
+
               </div>
             </template>
+
           </div>
         </div>
+
       </div>
     </div>
   </div>
@@ -375,6 +511,9 @@ onUnmounted(() => {
   flex-shrink: 0;
   border-bottom: 1px solid var(--cor-borda);
   padding: 7px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .busca-wrapper {
@@ -385,6 +524,7 @@ onUnmounted(() => {
   border: 1px solid var(--cor-borda);
   border-radius: 20px;
   padding: 5px 16px;
+  flex: 1;
   max-width: 520px;
 }
 
@@ -420,13 +560,45 @@ onUnmounted(() => {
   color: #cc4444;
 }
 
+/* Sininho */
+.sininho-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: default;
+  margin-left: auto;
+}
+
+.sininho-icone {
+  color: var(--cor-texto-fraco);
+}
+
+.sininho-badge {
+  position: absolute;
+  top: -6px;
+  right: -7px;
+  background-color: #cc2222;
+  color: #fff;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: bold;
+  min-width: 15px;
+  height: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  line-height: 1;
+}
+
 /* Datagrid */
 .datagrid-header,
 .linha {
   display: grid;
-  grid-template-columns: 1fr 90px 100px 110px 90px;
+  grid-template-columns: 1fr 60px 100px 110px 90px;
   align-items: center;
-  padding: 0 10px;
+  padding: 0 16px 0 10px;
 }
 
 .datagrid-header {
@@ -438,6 +610,21 @@ onUnmounted(() => {
   letter-spacing: 0.5px;
   text-transform: uppercase;
   flex-shrink: 0;
+}
+
+.pdf-viewer {
+  flex: 1;
+  border: none;
+  background: #111;
+}
+
+.pdf-sem-arquivo {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--cor-texto-fraco);
+  font-size: 13px;
 }
 
 .datagrid-body {
@@ -462,6 +649,11 @@ onUnmounted(() => {
 
 .linha.selecionada:hover {
   background-color: #1e4268;
+}
+
+.linha.em-exibicao {
+  background-color: #0f2a40;
+  border-left: 2px solid #4a9eff;
 }
 
 .nome-arquivo {
@@ -514,6 +706,11 @@ onUnmounted(() => {
 
 .btn-excluir:hover {
   color: #cc4444;
+}
+
+.btn-bloqueado {
+  opacity: 0.2 !important;
+  cursor: not-allowed !important;
 }
 
 .badge {
@@ -607,7 +804,7 @@ onUnmounted(() => {
   font-size: 13px;
 }
 
-/* Abas do side panel */
+/* Abas */
 .abas {
   display: flex;
   gap: 2px;
@@ -663,9 +860,13 @@ onUnmounted(() => {
   color: var(--cor-texto-fraco);
 }
 
+.obrigatorio {
+  color: #cc4444;
+  font-size: 11px;
+}
+
 .campo input,
-.campo textarea,
-.campo select {
+.campo textarea {
   background-color: #111;
   border: 1px solid var(--cor-borda);
   border-radius: 4px;
@@ -674,13 +875,70 @@ onUnmounted(() => {
   font-size: 13px;
   padding: 6px 8px;
   outline: none;
+}
+
+.campo input.desabilitado {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.campo textarea {
   resize: vertical;
 }
 
 .campo input:focus,
-.campo textarea:focus,
-.campo select:focus {
+.campo textarea:focus {
   border-color: #4a9eff;
+}
+
+/* Campo read-only */
+.campo-readonly {
+  background-color: #0e0e0e;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: var(--cor-texto-fraco);
+  font-size: 12px;
+  padding: 6px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: monospace;
+}
+
+/* Preview nome normalizado */
+.campo-preview {
+  background-color: #0d1a2a;
+  border: 1px solid #1e3a5f;
+  border-radius: 4px;
+  color: #4a9eff;
+  font-size: 11px;
+  padding: 6px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: monospace;
+}
+
+/* Checkbox */
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px !important;
+  font-weight: normal !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  color: var(--cor-texto) !important;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
 }
 
 .btn-salvar {

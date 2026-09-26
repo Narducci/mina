@@ -17,7 +17,7 @@ fn iniciar_watcher(
     state: tauri::State<WatcherState>,
 ) -> Result<(), String> {
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
-    *guard = None; // para e descarta o watcher anterior
+    *guard = None;
 
     if path.is_empty() {
         return Ok(());
@@ -47,6 +47,31 @@ fn iniciar_watcher(
     Ok(())
 }
 
+#[tauri::command]
+fn escanear_pasta(path: String) -> Result<Vec<String>, String> {
+    if path.is_empty() {
+        return Ok(vec![]);
+    }
+    let dir = std::path::Path::new(&path);
+    if !dir.is_dir() {
+        return Err(format!("Caminho não é um diretório: {}", path));
+    }
+    let entries = std::fs::read_dir(dir).map_err(|e| e.to_string())?;
+    let mut arquivos = Vec::new();
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_file() {
+            if let Some(ext) = p.extension() {
+                let ext = ext.to_string_lossy().to_lowercase();
+                if matches!(ext.as_str(), "pdf" | "png" | "jpg" | "jpeg") {
+                    arquivos.push(p.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+    Ok(arquivos)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let migrations = vec![
@@ -74,6 +99,23 @@ pub fn run() {
             sql: include_str!("../schema_v4.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 5,
+            description: "caminho_arquivo_em_comprovante",
+            sql: "ALTER TABLE comprovante ADD COLUMN caminho_arquivo TEXT;",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 6,
+            description: "add nome_curto and seq_documento",
+            sql: "ALTER TABLE comprovante ADD COLUMN nome_curto TEXT; \
+                CREATE TABLE IF NOT EXISTS seq_documento ( \
+                    id INTEGER PRIMARY KEY CHECK (id = 1), \
+                    proximo INTEGER NOT NULL DEFAULT 1 \
+                ); \
+                INSERT OR IGNORE INTO seq_documento (id, proximo) VALUES (1, 1);",
+            kind: MigrationKind::Up,
+},
     ];
 
     tauri::Builder::default()
@@ -86,7 +128,7 @@ pub fn run() {
                 .add_migrations("sqlite:mina.db", migrations)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![greet, iniciar_watcher])
+        .invoke_handler(tauri::generate_handler![greet, iniciar_watcher, escanear_pasta])
         .setup(|app| {
             if let Some(monitor) = app.primary_monitor()? {
                 let size = monitor.size();

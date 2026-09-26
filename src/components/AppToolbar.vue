@@ -13,13 +13,12 @@ function clicarExcluir() {
 }
 
 function clicarExibir() {
-  toolbar.exibirPdf = !toolbar.exibirPdf;
-  if (toolbar.onExibir) toolbar.onExibir(toolbar.exibirPdf);
+  if (toolbar.onExibir) toolbar.onExibir();
 }
 </script>
 
 <template>
-  <div class="app-toolbar">
+  <div class="app-toolbar" :class="{ 'pdf-ativo': toolbar.exibirPdf }">
     <!-- Botões de ação -->
     <div class="toolbar-grupo">
       <button
@@ -39,14 +38,14 @@ function clicarExibir() {
         <span>Excluir</span>
       </button>
       <button
-        class="toolbar-btn"
-        :class="{ ativo: toolbar.exibirPdf, habilitado: toolbar.exibirAtivo }"
+        class="toolbar-btn btn-exibir"
+        :class="{ ativo: toolbar.exibirPdf }"
         :disabled="!toolbar.exibirAtivo"
         @click="clicarExibir"
       >
         <EyeOff v-if="toolbar.exibirPdf" :size="15" />
         <Eye v-else :size="15" />
-        <span>{{ toolbar.exibirPdf ? "Fechar" : "Exibir" }}</span>
+        <span>{{ toolbar.exibirPdf ? 'Fechar' : 'Exibir' }}</span>
       </button>
     </div>
 
@@ -90,6 +89,11 @@ function clicarExibir() {
   background-color: var(--cor-menu-bg);
   border-bottom: 1px solid var(--cor-borda);
   flex-shrink: 0;
+  transition: box-shadow 0.2s;
+}
+
+.app-toolbar.pdf-ativo {
+  box-shadow: inset 0 -2px 0 rgba(74, 158, 255, 0.5);
 }
 
 .toolbar-grupo {
@@ -128,15 +132,15 @@ function clicarExibir() {
   cursor: default;
 }
 
-.toolbar-btn.habilitado {
-  color: #4a9eff;
+.btn-exibir {
+  min-width: 90px;
 }
 
-.toolbar-btn.ativo {
-  background-color: var(--cor-selecao);
-  color: var(--cor-texto-forte);
-  border-color: #4a9eff;
-  opacity: 1;
+.toolbar-btn.btn-exibir.ativo,
+.toolbar-btn.btn-exibir.ativo:hover {
+  background-color: rgba(74, 158, 255, 0.15);
+  border-color: rgba(74, 158, 255, 0.5);
+  color: #4a9eff;
 }
 
 .toolbar-sep {
