@@ -2,6 +2,7 @@ use tauri::{Manager, Emitter};
 use tauri_plugin_sql::{Migration, MigrationKind};
 use notify::{EventKind, RecursiveMode, Watcher};
 use std::sync::Mutex;
+use lopdf::{Document, Object, ObjectId, Dictionary};
 
 struct WatcherState(Mutex<Option<notify::RecommendedWatcher>>);
 
@@ -72,6 +73,72 @@ fn escanear_pasta(path: String) -> Result<Vec<String>, String> {
     Ok(arquivos)
 }
 
+/// Mescla fisicamente os PDFs em `caminhos` e salva o resultado em `destino`.
+/// As operações de banco (inserir novo comprovante, marcar originais) ficam no JS.
+#[tauri::command]
+fn mesclar_pdfs(caminhos: Vec<String>, destino: String) -> Result<String, String> {
+    if caminhos.len() < 2 {
+        return Err("Selecione ao menos dois arquivos para mesclar.".into());
+    }
+
+    let mut documents: Vec<Document> = caminhos
+        .iter()
+        .map(|p| Document::load(p).map_err(|e| format!("Erro ao abrir '{}': {}", p, e)))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut next_id: u32 = 1;
+    for doc in &mut documents {
+        doc.renumber_objects_with(next_id);
+        next_id = doc.max_id + 1;
+    }
+
+    let mut merged = Document::with_version("1.5");
+    let mut all_page_ids: Vec<ObjectId> = vec![];
+
+    for doc in documents {
+        let mut sorted_pages: Vec<(u32, ObjectId)> = doc.get_pages().into_iter().collect();
+        sorted_pages.sort_by_key(|(n, _)| *n);
+        for (_, pid) in sorted_pages {
+            all_page_ids.push(pid);
+        }
+        merged.objects.extend(doc.objects);
+    }
+
+    let pages_id: ObjectId = (next_id, 0);
+    next_id += 1;
+
+    for &pid in &all_page_ids {
+        if let Some(Object::Dictionary(ref mut dict)) = merged.objects.get_mut(&pid) {
+            dict.set("Parent", Object::Reference(pages_id));
+        }
+    }
+
+    let kids: Vec<Object> = all_page_ids
+        .iter()
+        .map(|&id| Object::Reference(id))
+        .collect();
+
+    let mut pages_dict = Dictionary::new();
+    pages_dict.set("Type", Object::Name(b"Pages".to_vec()));
+    pages_dict.set("Kids", Object::Array(kids));
+    pages_dict.set("Count", Object::Integer(all_page_ids.len() as i64));
+    merged.objects.insert(pages_id, Object::Dictionary(pages_dict));
+
+    let catalog_id: ObjectId = (next_id, 0);
+    let mut catalog_dict = Dictionary::new();
+    catalog_dict.set("Type", Object::Name(b"Catalog".to_vec()));
+    catalog_dict.set("Pages", Object::Reference(pages_id));
+    merged.objects.insert(catalog_id, Object::Dictionary(catalog_dict));
+
+    merged.trailer.set("Root", Object::Reference(catalog_id));
+
+    merged
+        .save(&destino)
+        .map_err(|e| format!("Erro ao salvar '{}': {}", destino, e))?;
+
+    Ok(destino)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let migrations = vec![
@@ -107,7 +174,7 @@ pub fn run() {
         },
         Migration {
             version: 6,
-            description: "add nome_curto and seq_documento",
+            description: "add_nome_curto_and_seq_documento",
             sql: "ALTER TABLE comprovante ADD COLUMN nome_curto TEXT; \
                 CREATE TABLE IF NOT EXISTS seq_documento ( \
                     id INTEGER PRIMARY KEY CHECK (id = 1), \
@@ -115,7 +182,14 @@ pub fn run() {
                 ); \
                 INSERT OR IGNORE INTO seq_documento (id, proximo) VALUES (1, 1);",
             kind: MigrationKind::Up,
-},
+        },
+        Migration {
+            version: 7,
+            description: "mesclado_em_e_mesclado_em_id_em_comprovante",
+            sql: "ALTER TABLE comprovante ADD COLUMN mesclado_em TEXT; \
+                  ALTER TABLE comprovante ADD COLUMN mesclado_em_id INTEGER REFERENCES comprovante(id);",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -128,7 +202,7 @@ pub fn run() {
                 .add_migrations("sqlite:mina.db", migrations)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![greet, iniciar_watcher, escanear_pasta])
+        .invoke_handler(tauri::generate_handler![greet, iniciar_watcher, escanear_pasta, mesclar_pdfs])
         .setup(|app| {
             if let Some(monitor) = app.primary_monitor()? {
                 let size = monitor.size();
