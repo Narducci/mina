@@ -9,7 +9,7 @@ import Database from "@tauri-apps/plugin-sql";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 const toolbar = useToolbarStore();
-const sidePanelAberto = ref(false);
+const sidePanelAberto = ref(true);
 const comprovantes = ref([]);
 const termoBusca = ref("");
 const linhaSelecionadaId = ref(null);
@@ -581,10 +581,12 @@ onUnmounted(() => {
               @click="selecionarLinha(c)"
             >
               <div class="col-nome">
-                <span v-if="modoMesclar && ordemMesclar(c) > 0" class="ordem-badge">{{ ordemMesclar(c) }}</span>
-                <span class="nome-arquivo">{{ nomeExibicao(c) }}</span>
-                <span v-if="c.total_mesclados > 0" class="badge-mesclado" title="Resultado de mesclagem">M</span>
-                <span class="descricao">{{ c.descricao }}</span>
+                <div class="col-nome-top">
+                  <span v-if="modoMesclar && ordemMesclar(c) > 0" class="ordem-badge">{{ ordemMesclar(c) }}</span>
+                  <span class="nome-arquivo">{{ nomeExibicao(c) }}</span>
+                  <span v-if="c.total_mesclados > 0" class="badge-mesclado" title="Resultado de mesclagem">M</span>
+                </div>
+                <span v-if="c.descricao" class="descricao">{{ c.descricao }}</span>
               </div>
               <div class="col-cat">{{ c.total_categorias }}</div>
               <div class="col-data">{{ formatarData(c.data_documento) }}</div>
@@ -938,6 +940,14 @@ onUnmounted(() => {
 .linha.mesclar-sem-pdf { opacity: 0.35; cursor: not-allowed; }
 
 .col-nome {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.col-nome-top {
   display: flex;
   align-items: center;
   gap: 4px;
