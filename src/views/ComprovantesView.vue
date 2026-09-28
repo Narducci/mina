@@ -399,11 +399,17 @@ async function executarMesclar() {
     const nomeBase = (nomeMesclado.value.trim() || "mesclado").replace(/\.pdf$/i, "");
     const destino  = pasta + nomeBase + ".pdf";
 
-    await invoke("mesclar_pdfs", { caminhos, destino });
+    const { hash } = await invoke("mesclar_pdfs", { caminhos, destino });
+
+    const cfg = await banco.select("SELECT pasta_raiz_comprovantes FROM configuracao WHERE id = 1");
+    const raiz = cfg[0]?.pasta_raiz_comprovantes || "";
+    const caminhoRelMesclar = raiz && destino.startsWith(raiz)
+      ? destino.slice(raiz.length).replace(/^\//, "")
+      : nomeBase + ".pdf";
 
     await banco.execute(
-      "INSERT INTO comprovante (nome, caminho_arquivo, status) VALUES ($1, $2, 'inbox')",
-      [nomeBase + ".pdf", destino]
+      "INSERT INTO comprovante (nome, caminho_relativo, caminho_arquivo, hash_arquivo, status) VALUES ($1, $2, $3, $4, 'inbox')",
+      [nomeBase + ".pdf", caminhoRelMesclar, destino, hash]
     );
     const seqRows  = await banco.select("SELECT last_insert_rowid() AS id");
     const novoId   = seqRows[0].id;
@@ -487,7 +493,16 @@ onMounted(async () => {
     const exist   = await banco.select("SELECT id FROM comprovante WHERE caminho_arquivo = $1", [caminho]);
     if (exist.length === 0) {
       const nome = caminho.split("/").pop() || caminho;
-      await banco.execute("INSERT INTO comprovante (nome, caminho_arquivo, status) VALUES ($1, $2, 'inbox')", [nome, caminho]);
+      const hash = await invoke("calcular_hash", { caminho });
+      const cfgW = await banco.select("SELECT pasta_raiz_comprovantes FROM configuracao WHERE id = 1");
+      const raizW = cfgW[0]?.pasta_raiz_comprovantes || "";
+      const caminhoRelW = raizW && caminho.startsWith(raizW)
+        ? caminho.slice(raizW.length).replace(/^\//, "")
+        : nome;
+      await banco.execute(
+        "INSERT INTO comprovante (nome, caminho_relativo, caminho_arquivo, hash_arquivo, status) VALUES ($1, $2, $3, $4, 'inbox')",
+        [nome, caminhoRelW, caminho, hash]
+      );
     }
     await carregarComprovantes();
   });

@@ -3,12 +3,32 @@ use tauri_plugin_sql::{Migration, MigrationKind};
 use notify::{EventKind, RecursiveMode, Watcher};
 use std::sync::Mutex;
 use lopdf::{Document, Object, ObjectId, Dictionary};
+use sha2::{Sha256, Digest};
 
 struct WatcherState(Mutex<Option<notify::RecommendedWatcher>>);
+
+// ── Helpers ───────────────────────────────────────────────────────────
+fn hash_arquivo(caminho: &str) -> Result<String, String> {
+    let bytes = std::fs::read(caminho).map_err(|e| e.to_string())?;
+    let result = Sha256::digest(&bytes);
+    Ok(result.iter().map(|b| format!("{:02x}", b)).collect())
+}
+
+// ── Struct de retorno do mesclar ──────────────────────────────────────
+#[derive(serde::Serialize)]
+struct MesclarResult {
+    destino: String,
+    hash: String,
+}
 
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+#[tauri::command]
+fn calcular_hash(caminho: String) -> Result<String, String> {
+    hash_arquivo(&caminho)
 }
 
 #[tauri::command]
@@ -73,10 +93,10 @@ fn escanear_pasta(path: String) -> Result<Vec<String>, String> {
     Ok(arquivos)
 }
 
-/// Mescla fisicamente os PDFs em `caminhos` e salva o resultado em `destino`.
-/// As operações de banco (inserir novo comprovante, marcar originais) ficam no JS.
+/// Mescla fisicamente os PDFs em `caminhos`, salva em `destino` e
+/// retorna o caminho e o SHA-256 do arquivo gerado.
 #[tauri::command]
-fn mesclar_pdfs(caminhos: Vec<String>, destino: String) -> Result<String, String> {
+fn mesclar_pdfs(caminhos: Vec<String>, destino: String) -> Result<MesclarResult, String> {
     if caminhos.len() < 2 {
         return Err("Selecione ao menos dois arquivos para mesclar.".into());
     }
@@ -136,7 +156,9 @@ fn mesclar_pdfs(caminhos: Vec<String>, destino: String) -> Result<String, String
         .save(&destino)
         .map_err(|e| format!("Erro ao salvar '{}': {}", destino, e))?;
 
-    Ok(destino)
+    let hash = hash_arquivo(&destino)?;
+
+    Ok(MesclarResult { destino, hash })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -202,7 +224,13 @@ pub fn run() {
                 .add_migrations("sqlite:mina.db", migrations)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![greet, iniciar_watcher, escanear_pasta, mesclar_pdfs])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            iniciar_watcher,
+            escanear_pasta,
+            mesclar_pdfs,
+            calcular_hash
+        ])
         .setup(|app| {
             if let Some(monitor) = app.primary_monitor()? {
                 let size = monitor.size();
