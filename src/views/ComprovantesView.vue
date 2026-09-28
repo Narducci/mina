@@ -237,7 +237,7 @@ async function carregarOriginaisMesclados(id) {
   const banco = await getDb();
   const rows  = await banco.select(
     `SELECT id, nome, nome_curto, numero_documento, caminho_arquivo
-     FROM comprovante WHERE mesclado_em_id = $1 AND deletado_em IS NULL`,
+     FROM comprovante WHERE mesclado_em_id = $1`,
     [id]
   );
   originaisMesclados.value = rows;
@@ -559,6 +559,8 @@ watch(() => toolbar.filtro, async () => {
   }
 });
 
+watch(modoMesclar, (v) => { toolbar.mesclarAtivo = v; });
+
 let unlistenNovo = null;
 
 onMounted(async () => {
@@ -566,6 +568,7 @@ onMounted(async () => {
     importar: () => console.log("importar"),
     excluir: () => linhaSelecionadaId.value && excluirLinha(linhaSelecionadaId.value, { stopPropagation: () => {} }),
     exibir: exibirArquivo,
+    mesclar: iniciarMesclar,
   });
   toolbar.exibirAtivo = false;
   await Promise.all([carregarComprovantes(), carregarCategorias()]);
@@ -624,16 +627,6 @@ onUnmounted(() => {
               <button v-if="termoBusca" class="busca-limpar" @click="termoBusca = ''">✕</button>
             </div>
 
-            <button
-              class="btn-mesclar-toolbar"
-              :class="{ ativo: modoMesclar }"
-              :disabled="modoMesclar"
-              @click="iniciarMesclar"
-            >
-              <Merge :size="13" />
-              Mesclar PDFs
-            </button>
-
             <div
               v-if="totalInbox > 0"
               class="sininho-wrapper"
@@ -647,7 +640,7 @@ onUnmounted(() => {
           <!-- Cabeçalho datagrid -->
           <div class="datagrid-header" :class="{ 'modo-mesclar': modoMesclar }">
             <span class="col-nome">Nome e Descrição</span>
-            <span class="col-cat">Cat.</span>
+            <span class="col-cat">Categorias</span>
             <span class="col-data">Data</span>
             <span class="col-status">Status</span>
             <span v-if="!modoMesclar" class="col-acoes">Ações</span>
@@ -778,9 +771,6 @@ onUnmounted(() => {
                     <span class="original-nome" :title="o.nome">
                       {{ o.numero_documento ? o.numero_documento + ' · ' : '' }}{{ o.nome_curto || o.nome }}
                     </span>
-                    <button class="original-ocultar" title="Ocultar da lista" @click="ocultarOriginal(o.id)">
-                      <X :size="11" />
-                    </button>
                   </div>
                 </div>
 
@@ -817,6 +807,19 @@ onUnmounted(() => {
                 <div class="campo">
                   <label>Nome normalizado</label>
                   <div class="campo-preview" :title="nomeNormalizado">{{ nomeNormalizado }}</div>
+                </div>
+
+                <!-- Classificações selecionadas -->
+                <div v-if="categoriasSelecionadas.size > 0" class="classificacoes-resumo">
+                  <div class="classificacoes-titulo">Classificações</div>
+                  <div class="classificacoes-lista">
+                    <span
+                      v-for="cat in categorias.filter(c => categoriasSelecionadas.has(c.id))"
+                      :key="cat.id"
+                      class="classificacao-badge"
+                      :class="cat.tipo"
+                    >{{ cat.nome }}</span>
+                  </div>
                 </div>
 
               </div>
@@ -995,24 +998,6 @@ onUnmounted(() => {
 .busca-limpar:hover { color: #cc4444; }
 
 /* Botão Mesclar na toolbar */
-.btn-mesclar-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
-  border: 1px solid var(--cor-borda);
-  border-radius: 4px;
-  background: none;
-  color: var(--cor-texto-fraco);
-  cursor: pointer;
-  font-size: 12px;
-  font-family: inherit;
-  transition: background-color 0.1s, color 0.1s;
-}
-.btn-mesclar-toolbar:hover:not(:disabled) { color: var(--cor-texto-forte); background-color: var(--cor-menu-hover); }
-.btn-mesclar-toolbar:disabled { opacity: 0.4; cursor: default; }
-.btn-mesclar-toolbar.ativo { color: #4a9eff; border-color: #4a9eff; }
-
 /* Sininho */
 .sininho-wrapper {
   position: relative;
@@ -1045,14 +1030,14 @@ onUnmounted(() => {
 .datagrid-header,
 .linha {
   display: grid;
-  grid-template-columns: 1fr 60px 100px 110px 90px;
+  grid-template-columns: 1fr 90px 100px 110px 90px;
   align-items: center;
   padding: 0 16px 0 10px;
 }
 
 .datagrid-header.modo-mesclar,
 .modo-mesclar.linha {
-  grid-template-columns: 1fr 60px 100px 110px;
+  grid-template-columns: 1fr 90px 100px 110px;
 }
 
 .datagrid-header {
@@ -1156,10 +1141,20 @@ onUnmounted(() => {
   color: var(--cor-texto);
 }
 
+.col-cat {
+  text-align: center;
+}
+
 .col-acoes {
   display: flex;
   align-items: center;
   gap: 4px;
+  justify-content: flex-end;
+}
+
+/* Header spans precisam herdar o alinhamento das células */
+.datagrid-header .col-acoes {
+  display: flex;
   justify-content: flex-end;
 }
 
@@ -1449,6 +1444,21 @@ onUnmounted(() => {
 .original-ocultar:hover {
   color: #cc4444;
 }
+
+.classificacoes-resumo { margin-top: 12px; }
+.classificacoes-titulo { font-size: 10px; font-weight: 600; color: #8899aa; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; }
+.classificacoes-lista { display: flex; flex-wrap: wrap; gap: 4px; }
+.classificacao-badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-weight: 500;
+  border: 1px solid;
+}
+.classificacao-badge.entrada  { color: #4daa70; border-color: #2a5c3a; background: rgba(77,170,112,0.08); }
+.classificacao-badge.saida    { color: #cc5555; border-color: #6a2a2a; background: rgba(204,85,85,0.08); }
+.classificacao-badge.neutro   { color: #8899aa; border-color: #334455; background: rgba(136,153,170,0.08); }
+
 .btn-link-danger {
   background: none;
   border: none;

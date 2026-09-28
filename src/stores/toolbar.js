@@ -18,6 +18,8 @@ export const useToolbarStore = defineStore("toolbar", () => {
   const onImportar = ref(null);
   const onExcluir = ref(null);
   const onExibir = ref(null);
+  const onMesclar = ref(null);
+  const mesclarAtivo = ref(false); // true quando modoMesclar está ativo na view
 
   function ativarComprovantes(callbacks = {}) {
     importarAtivo.value = true;
@@ -27,6 +29,7 @@ export const useToolbarStore = defineStore("toolbar", () => {
     onImportar.value = callbacks.importar ?? null;
     onExcluir.value = callbacks.excluir ?? null;
     onExibir.value = callbacks.exibir ?? null;
+    onMesclar.value = callbacks.mesclar ?? null;
   }
 
   function desativar() {
@@ -35,10 +38,12 @@ export const useToolbarStore = defineStore("toolbar", () => {
     exibirAtivo.value = false;
     filtroAtivo.value = false;
     exibirPdf.value = false;
+    mesclarAtivo.value = false;
     filtro.value = "inbox";
     onImportar.value = null;
     onExcluir.value = null;
     onExibir.value = null;
+    onMesclar.value = null;
   }
 
   return {
@@ -48,9 +53,11 @@ export const useToolbarStore = defineStore("toolbar", () => {
     filtroAtivo,
     filtro,
     exibirPdf,
+    mesclarAtivo,
     onImportar,
     onExcluir,
     onExibir,
+    onMesclar,
     ativarComprovantes,
     desativar,
   };

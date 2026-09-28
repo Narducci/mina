@@ -1,6 +1,6 @@
 <script setup>
 import { useToolbarStore } from "../stores/toolbar.js";
-import { FolderOpen, Trash2, Eye, EyeOff } from "@lucide/vue";
+import { FolderOpen, Trash2, Eye, EyeOff, Merge } from "@lucide/vue";
 
 const toolbar = useToolbarStore();
 
@@ -14,6 +14,10 @@ function clicarExcluir() {
 
 function clicarExibir() {
   if (toolbar.onExibir) toolbar.onExibir();
+}
+
+function clicarMesclar() {
+  if (toolbar.onMesclar) toolbar.onMesclar();
 }
 </script>
 
@@ -76,6 +80,20 @@ function clicarExibir() {
         Todos
       </button>
     </div>
+
+    <!-- Separador + Mesclar PDFs -->
+    <template v-if="toolbar.onMesclar">
+      <div class="toolbar-sep"></div>
+      <button
+        class="toolbar-btn btn-mesclar"
+        :class="{ ativo: toolbar.mesclarAtivo }"
+        :disabled="toolbar.mesclarAtivo"
+        @click="clicarMesclar"
+      >
+        <Merge :size="15" />
+        <span>Mesclar PDFs</span>
+      </button>
+    </template>
   </div>
 </template>
 
@@ -182,5 +200,12 @@ function clicarExibir() {
 .filtro-btn.ativo {
   background-color: var(--cor-selecao);
   color: var(--cor-texto-forte);
+}
+
+.toolbar-btn.btn-mesclar.ativo,
+.toolbar-btn.btn-mesclar.ativo:hover {
+  background-color: rgba(74, 158, 255, 0.15);
+  border-color: rgba(74, 158, 255, 0.5);
+  color: #4a9eff;
 }
 </style>
