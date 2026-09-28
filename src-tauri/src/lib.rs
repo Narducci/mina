@@ -32,6 +32,11 @@ fn calcular_hash(caminho: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn excluir_arquivo(caminho: String) -> Result<(), String> {
+    std::fs::remove_file(&caminho).map_err(|e| format!("Erro ao excluir '{}': {}", caminho, e))
+}
+
+#[tauri::command]
 fn iniciar_watcher(
     path: String,
     app_handle: tauri::AppHandle,
@@ -234,7 +239,8 @@ pub fn run() {
             iniciar_watcher,
             escanear_pasta,
             mesclar_pdfs,
-            calcular_hash
+            calcular_hash,
+            excluir_arquivo
         ])
         .setup(|app| {
             if let Some(monitor) = app.primary_monitor()? {

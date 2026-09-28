@@ -4,9 +4,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { useToolbarStore } from "../stores/toolbar.js";
-import { PanelRightClose, PanelRightOpen, Search, Pencil, Archive, Trash2, Bell, Merge } from "@lucide/vue";
+import { PanelRightClose, PanelRightOpen, Search, Pencil, Archive, Trash2, Bell, Merge, X } from "@lucide/vue";
 import Database from "@tauri-apps/plugin-sql";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import AppModal from "../components/AppModal.vue";
 
 const toolbar = useToolbarStore();
 const sidePanelAberto = ref(true);
@@ -15,6 +16,15 @@ const termoBusca = ref("");
 const linhaSelecionadaId = ref(null);
 const abaAtiva = ref("identificar");
 const salvando = ref(false);
+
+// ── Modais ────────────────────────────────────────────────────────────
+const modalErroTexto          = ref(null);   // texto → modal de erro visível
+const modalConfirmarDesfazer  = ref(false);  // modal confirm desfazer tardio
+const modalCancelar           = ref(false);  // modal confirm cancelar edição
+let   _idDesfazerPendente     = null;
+
+// ── Originais mesclados ───────────────────────────────────────────────
+const originaisMesclados = ref([]);
 
 // ── Formulário (Identificar) ───────────────────────────────────────────
 const form = ref({
@@ -222,6 +232,23 @@ async function carregarCategorias() {
   categorias.value = rows;
 }
 
+async function carregarOriginaisMesclados(id) {
+  if (!id) { originaisMesclados.value = []; return; }
+  const banco = await getDb();
+  const rows  = await banco.select(
+    `SELECT id, nome, nome_curto, numero_documento, caminho_arquivo
+     FROM comprovante WHERE mesclado_em_id = $1 AND deletado_em IS NULL`,
+    [id]
+  );
+  originaisMesclados.value = rows;
+}
+
+async function ocultarOriginal(id) {
+  const banco = await getDb();
+  await banco.execute("UPDATE comprovante SET deletado_em = datetime('now') WHERE id = $1", [id]);
+  await carregarOriginaisMesclados(linhaSelecionadaId.value);
+}
+
 // ── Selecionar linha ────────────────────────────────────────────────────
 function selecionarLinha(c) {
   if (modoMesclar.value) { toggleMesclar(c); return; }
@@ -246,6 +273,17 @@ async function gerarNumeroSequencial(banco) {
   const proximo = rows[0]?.proximo ?? 1;
   await banco.execute("UPDATE seq_documento SET proximo = proximo + 1 WHERE id = 1");
   return "S" + String(proximo).padStart(8, "0");
+}
+
+// ── Cancelar edição ─────────────────────────────────────────────────────
+function cancelarEdicao() {
+  modalCancelar.value = true;
+}
+
+function confirmarCancelar() {
+  modalCancelar.value = false;
+  form.value = { ...formOriginal.value };
+  categoriasSelecionadas.value = new Set(categoriasSelecionadasOriginal.value);
 }
 
 // ── Salvar unificado ────────────────────────────────────────────────────
@@ -283,7 +321,7 @@ async function salvar() {
     categoriasSelecionadasOriginal.value = new Set(categoriasSelecionadas.value);
     await carregarComprovantes();
   } catch (err) {
-    alert("Erro ao salvar:\n" + err);
+    modalErroTexto.value = "Erro ao salvar:\n" + err;
   } finally {
     salvando.value = false;
   }
@@ -390,6 +428,7 @@ function removerMesclar(idx) {
 async function executarMesclar() {
   if (selecionadosMesclar.value.length < 2 || mesclando.value) return;
   mesclando.value = true;
+  let destino = null;
   try {
     const banco    = await getDb();
     const itens    = selecionadosMesclar.value;
@@ -397,9 +436,21 @@ async function executarMesclar() {
     const primeiro = caminhos[0];
     const pasta    = primeiro.substring(0, primeiro.lastIndexOf("/") + 1);
     const nomeBase = (nomeMesclado.value.trim() || "mesclado").replace(/\.pdf$/i, "");
-    const destino  = pasta + nomeBase + ".pdf";
+    destino        = pasta + nomeBase + ".pdf";
 
+    // ── 1. Verificar hash duplicado antes de gravar no banco ──────────
+    // (o arquivo físico já foi criado pelo invoke abaixo; verificamos
+    //  o hash devolvido antes de qualquer escrita no banco)
     const { hash } = await invoke("mesclar_pdfs", { caminhos, destino });
+
+    const jaExiste = await banco.select(
+      "SELECT id FROM comprovante WHERE hash_arquivo = $1", [hash]
+    );
+    if (jaExiste.length > 0) {
+      await invoke("excluir_arquivo", { caminho: destino }).catch(() => {});
+      modalErroTexto.value = "Já existe um arquivo idêntico no acervo (mesmo conteúdo).";
+      return;
+    }
 
     const cfg = await banco.select("SELECT pasta_raiz_comprovantes FROM configuracao WHERE id = 1");
     const raiz = cfg[0]?.pasta_raiz_comprovantes || "";
@@ -407,28 +458,37 @@ async function executarMesclar() {
       ? destino.slice(raiz.length).replace(/^\//, "")
       : nomeBase + ".pdf";
 
-    await banco.execute(
+    // ── 2. INSERT + UPDATEs (rollback manual em caso de erro) ────────
+    const idsOriginais = itens.map(i => i.id);
+    const insResult = await banco.execute(
       "INSERT INTO comprovante (nome, caminho_relativo, caminho_arquivo, hash_arquivo, status) VALUES ($1, $2, $3, $4, 'inbox')",
       [nomeBase + ".pdf", caminhoRelMesclar, destino, hash]
     );
-    const seqRows  = await banco.select("SELECT last_insert_rowid() AS id");
-    const novoId   = seqRows[0].id;
+    const novoId = insResult.lastInsertId;
 
-    const idsOriginais = itens.map(i => i.id);
-    for (const id of idsOriginais) {
-      await banco.execute(
-        "UPDATE comprovante SET mesclado_em = datetime('now'), mesclado_em_id = $1 WHERE id = $2",
-        [novoId, id]
-      );
+    try {
+      for (const id of idsOriginais) {
+        await banco.execute(
+          "UPDATE comprovante SET mesclado_em = datetime('now'), mesclado_em_id = $1, deletado_em = datetime('now') WHERE id = $2",
+          [novoId, id]
+        );
+      }
+    } catch (errUpd) {
+      // Desfaz o INSERT manualmente se os UPDATEs falharem
+      await banco.execute("DELETE FROM comprovante WHERE id = $1", [novoId]).catch(() => {});
+      throw errUpd;
     }
 
+    destino = null; // arquivo está consistente — não deletar no catch externo
     cancelarMesclar();
+    toolbar.filtro = 'inbox';
     await carregarComprovantes();
     linhaSelecionadaId.value = novoId;
     await Promise.all([carregarDetalhe(novoId), carregarCategoriasComprovante(novoId)]);
     mostrarToastMesclar(idsOriginais, novoId);
   } catch (err) {
-    alert("Erro ao mesclar:\n" + err);
+    if (destino) await invoke("excluir_arquivo", { caminho: destino }).catch(() => {});
+    modalErroTexto.value = "Erro ao mesclar:\n" + err;
   } finally {
     mesclando.value = false;
   }
@@ -445,34 +505,58 @@ async function desfazerMesclar(idsOriginais, idResultado) {
   toastMesclar.value = null;
   try {
     const banco = await getDb();
+    // recupera caminho do arquivo mesclado antes de remover do banco
+    const rows = await banco.select("SELECT caminho_arquivo FROM comprovante WHERE id = $1", [idResultado]);
+    const caminhoMesclado = rows[0]?.caminho_arquivo;
+
     for (const id of idsOriginais) {
-      await banco.execute("UPDATE comprovante SET mesclado_em = NULL, mesclado_em_id = NULL WHERE id = $1", [id]);
+      await banco.execute(
+        "UPDATE comprovante SET mesclado_em = NULL, mesclado_em_id = NULL, deletado_em = NULL WHERE id = $1",
+        [id]
+      );
     }
-    await banco.execute("UPDATE comprovante SET deletado_em = datetime('now') WHERE id = $1", [idResultado]);
+    await banco.execute("DELETE FROM comprovante WHERE id = $1", [idResultado]);
+
+    if (caminhoMesclado) {
+      await invoke("excluir_arquivo", { caminho: caminhoMesclado });
+    }
     if (linhaSelecionadaId.value === idResultado) linhaSelecionadaId.value = null;
     await carregarComprovantes();
   } catch (err) {
-    alert("Erro ao desfazer:\n" + err);
+    modalErroTexto.value = "Erro ao desfazer:\n" + err;
   }
 }
 
-async function desfazerMesclarTardio(idResultado) {
-  const ok = confirm("Desfazer mesclagem? Os originais voltarão à lista.");
-  if (!ok) return;
+function desfazerMesclarTardio(idResultado) {
+  _idDesfazerPendente = idResultado;
+  modalConfirmarDesfazer.value = true;
+}
+
+async function confirmarDesfazerTardio() {
+  modalConfirmarDesfazer.value = false;
+  if (!_idDesfazerPendente) return;
+  const id = _idDesfazerPendente;
+  _idDesfazerPendente = null;
   const banco = await getDb();
-  const rows  = await banco.select("SELECT id FROM comprovante WHERE mesclado_em_id = $1 AND deletado_em IS NULL", [idResultado]);
-  await desfazerMesclar(rows.map(r => r.id), idResultado);
+  const rows  = await banco.select("SELECT id FROM comprovante WHERE mesclado_em_id = $1 AND deletado_em IS NULL", [id]);
+  await desfazerMesclar(rows.map(r => r.id), id);
 }
 
 // ── Watch / ciclo ────────────────────────────────────────────────────────
 watch(linhaSelecionadaId, (id) => {
   toolbar.exibirAtivo = id !== null;
-  if (id === null) toolbar.exibirPdf = false;
+  if (id === null) { toolbar.exibirPdf = false; originaisMesclados.value = []; }
+  else carregarOriginaisMesclados(id);
 });
 
-watch(() => toolbar.filtro, () => {
+watch(() => toolbar.filtro, async () => {
   linhaSelecionadaId.value = null;
-  carregarComprovantes();
+  await carregarComprovantes();
+  if (comprovantes.value.length > 0) {
+    const primeiro = comprovantes.value[0];
+    linhaSelecionadaId.value = primeiro.id;
+    await Promise.all([carregarDetalhe(primeiro.id), carregarCategoriasComprovante(primeiro.id)]);
+  }
 });
 
 let unlistenNovo = null;
@@ -485,26 +569,36 @@ onMounted(async () => {
   });
   toolbar.exibirAtivo = false;
   await Promise.all([carregarComprovantes(), carregarCategorias()]);
+  if (comprovantes.value.length > 0) {
+    const primeiro = comprovantes.value[0];
+    linhaSelecionadaId.value = primeiro.id;
+    await Promise.all([carregarDetalhe(primeiro.id), carregarCategoriasComprovante(primeiro.id)]);
+  }
   document.addEventListener("keydown", handleTeclado);
 
   unlistenNovo = await listen("comprovante:novo", async (event) => {
     const caminho = event.payload;
     const banco   = await getDb();
+    // Ignora se o caminho já está registrado (ex: arquivo criado pela mesclagem)
     const exist   = await banco.select("SELECT id FROM comprovante WHERE caminho_arquivo = $1", [caminho]);
     if (exist.length === 0) {
       const nome = caminho.split("/").pop() || caminho;
       const hash = await invoke("calcular_hash", { caminho });
-      const cfgW = await banco.select("SELECT pasta_raiz_comprovantes FROM configuracao WHERE id = 1");
-      const raizW = cfgW[0]?.pasta_raiz_comprovantes || "";
-      const caminhoRelW = raizW && caminho.startsWith(raizW)
-        ? caminho.slice(raizW.length).replace(/^\//, "")
-        : nome;
-      await banco.execute(
-        "INSERT INTO comprovante (nome, caminho_relativo, caminho_arquivo, hash_arquivo, status) VALUES ($1, $2, $3, $4, 'inbox')",
-        [nome, caminhoRelW, caminho, hash]
-      );
+      // Ignora se o hash já está registrado (dupla garantia contra corrida com mesclagem)
+      const existHash = await banco.select("SELECT id FROM comprovante WHERE hash_arquivo = $1", [hash]);
+      if (existHash.length === 0) {
+        const cfgW = await banco.select("SELECT pasta_raiz_comprovantes FROM configuracao WHERE id = 1");
+        const raizW = cfgW[0]?.pasta_raiz_comprovantes || "";
+        const caminhoRelW = raizW && caminho.startsWith(raizW)
+          ? caminho.slice(raizW.length).replace(/^\//, "")
+          : nome;
+        await banco.execute(
+          "INSERT INTO comprovante (nome, caminho_relativo, caminho_arquivo, hash_arquivo, status) VALUES ($1, $2, $3, $4, 'inbox')",
+          [nome, caminhoRelW, caminho, hash]
+        );
+        await carregarComprovantes();
+      }
     }
-    await carregarComprovantes();
   });
 });
 
@@ -678,6 +772,18 @@ onUnmounted(() => {
                   <button class="btn-link-danger" @click="desfazerMesclarTardio(linhaSelecionadaId)">Desfazer</button>
                 </div>
 
+                <div v-if="originaisMesclados.length > 0" class="originais-mesclados">
+                  <div class="originais-titulo">Arquivos mesclados</div>
+                  <div v-for="o in originaisMesclados" :key="o.id" class="original-item">
+                    <span class="original-nome" :title="o.nome">
+                      {{ o.numero_documento ? o.numero_documento + ' · ' : '' }}{{ o.nome_curto || o.nome }}
+                    </span>
+                    <button class="original-ocultar" title="Ocultar da lista" @click="ocultarOriginal(o.id)">
+                      <X :size="11" />
+                    </button>
+                  </div>
+                </div>
+
                 <div class="campo">
                   <label>Nome do arquivo</label>
                   <div class="campo-readonly">{{ form.nome || '—' }}</div>
@@ -685,9 +791,10 @@ onUnmounted(() => {
 
                 <div class="campo">
                   <label>Número do documento</label>
-                  <input v-model="form.numero_documento" type="text" :disabled="form.sem_numero" placeholder="Ex: NF-001" :class="{ desabilitado: form.sem_numero }" />
-                  <label class="checkbox-label">
-                    <input type="checkbox" v-model="form.sem_numero" @change="onSemNumero" />
+                  <input v-model="form.numero_documento" type="text" maxlength="9" :disabled="form.sem_numero" placeholder="Ex: NF-001" :class="{ desabilitado: form.sem_numero }" />
+                  <label class="checkbox-label" :class="{ desabilitado: form.numero_documento.trim() !== '' }">
+                    <input type="checkbox" v-model="form.sem_numero" @change="onSemNumero"
+                      :disabled="form.numero_documento.trim() !== ''" />
                     Documento sem número
                   </label>
                 </div>
@@ -743,6 +850,9 @@ onUnmounted(() => {
           <!-- Footer salvar -->
           <div v-if="sidePanelAberto && linhaSelecionadaId" class="side-panel-footer">
             <span v-if="dirty" class="footer-dirty">● Não salvo</span>
+            <button v-if="dirty" class="btn-cancelar" :disabled="salvando" @click="cancelarEdicao">
+              Cancelar
+            </button>
             <button class="btn-salvar" :disabled="salvando || !dirty" @click="salvar">
               {{ salvando ? 'Salvando…' : 'Salvar' }}
             </button>
@@ -759,6 +869,48 @@ onUnmounted(() => {
       <span>Mesclagem concluída.</span>
       <button class="toast-desfazer" @click="desfazerMesclar(toastMesclar.idsOriginais, toastMesclar.idResultado)">Desfazer</button>
     </div>
+  </Teleport>
+
+  <!-- Modal: erro genérico -->
+  <Teleport to="body">
+    <AppModal
+      v-if="modalErroTexto"
+      titulo="Erro"
+      texto-confirmar="OK"
+      :exibir-cancelar="false"
+      @fechar="modalErroTexto = null"
+      @confirmar="modalErroTexto = null"
+    >
+      <pre style="white-space:pre-wrap;font-size:0.82rem;margin:0">{{ modalErroTexto }}</pre>
+    </AppModal>
+  </Teleport>
+
+  <!-- Modal: confirmar desfazer mesclagem tardia -->
+  <Teleport to="body">
+    <AppModal
+      v-if="modalConfirmarDesfazer"
+      titulo="Desfazer mesclagem"
+      texto-cancelar="Cancelar"
+      texto-confirmar="Desfazer"
+      @fechar="modalConfirmarDesfazer = false"
+      @confirmar="confirmarDesfazerTardio"
+    >
+      <p style="margin:0">Isso irá restaurar os arquivos originais e excluir o arquivo mesclado. Deseja continuar?</p>
+    </AppModal>
+  </Teleport>
+
+  <!-- Modal: confirmar cancelar edição -->
+  <Teleport to="body">
+    <AppModal
+      v-if="modalCancelar"
+      titulo="Descartar alterações"
+      texto-cancelar="Continuar editando"
+      texto-confirmar="Descartar"
+      @fechar="modalCancelar = false"
+      @confirmar="confirmarCancelar"
+    >
+      <p style="margin:0">As alterações não salvas serão descartadas. Deseja continuar?</p>
+    </AppModal>
   </Teleport>
 </template>
 
@@ -1254,6 +1406,49 @@ onUnmounted(() => {
   color: #4a9eff;
   border: 1px solid #1e3a5f;
 }
+.originais-mesclados {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.originais-titulo {
+  font-size: 10px;
+  font-weight: 600;
+  color: #8899aa;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 2px;
+}
+.original-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  background: #0d1a2a;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.original-nome {
+  flex: 1;
+  color: #aabbcc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.original-ocultar {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #556677;
+  padding: 1px;
+  display: flex;
+  align-items: center;
+}
+.original-ocultar:hover {
+  color: #cc4444;
+}
 .btn-link-danger {
   background: none;
   border: none;
@@ -1287,6 +1482,7 @@ onUnmounted(() => {
   outline: none;
 }
 .campo input.desabilitado { opacity: 0.4; cursor: not-allowed; }
+.checkbox-label.desabilitado { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
 .campo textarea { resize: vertical; }
 .campo input:focus, .campo textarea:focus { border-color: #4a9eff; }
 
@@ -1424,6 +1620,22 @@ onUnmounted(() => {
 }
 .btn-salvar:hover:not(:disabled) { background-color: #1e5a94; }
 .btn-salvar:disabled { opacity: 0.4; cursor: default; }
+
+.btn-cancelar {
+  margin-top: 0;
+  background-color: transparent;
+  border: 1px solid #445566;
+  border-radius: 4px;
+  color: #aabbcc;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  transition: border-color 0.15s, color 0.15s;
+}
+.btn-cancelar:hover:not(:disabled) { border-color: #cc4444; color: #cc4444; }
+.btn-cancelar:disabled { opacity: 0.4; cursor: default; }
 
 /* Toast mesclar */
 .toast-mesclar {
