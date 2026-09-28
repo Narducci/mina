@@ -103,7 +103,11 @@ fn mesclar_pdfs(caminhos: Vec<String>, destino: String) -> Result<MesclarResult,
 
     let mut documents: Vec<Document> = caminhos
         .iter()
-        .map(|p| Document::load(p).map_err(|e| format!("Erro ao abrir '{}': {}", p, e)))
+        .map(|p| -> Result<Document, String> {
+            let mut doc = Document::load(p).map_err(|e| format!("Erro ao abrir '{}': {}", p, e))?;
+            doc.decompress();
+            Ok(doc)
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut next_id: u32 = 1;
@@ -149,6 +153,7 @@ fn mesclar_pdfs(caminhos: Vec<String>, destino: String) -> Result<MesclarResult,
     catalog_dict.set("Type", Object::Name(b"Catalog".to_vec()));
     catalog_dict.set("Pages", Object::Reference(pages_id));
     merged.objects.insert(catalog_id, Object::Dictionary(catalog_dict));
+    merged.max_id = next_id;
 
     merged.trailer.set("Root", Object::Reference(catalog_id));
 
