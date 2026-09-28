@@ -1,9 +1,11 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { useToolbarStore } from "../stores/toolbar.js";
-import { PanelRightClose, PanelRightOpen, Search, Pencil, Archive, Trash2, Bell } from "@lucide/vue";
+import { PanelRightClose, PanelRightOpen, Search, Pencil, Archive, Trash2, Bell, Merge } from "@lucide/vue";
 import Database from "@tauri-apps/plugin-sql";
-import AppSelect from "../components/AppSelect.vue";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 const toolbar = useToolbarStore();
@@ -11,8 +13,10 @@ const sidePanelAberto = ref(false);
 const comprovantes = ref([]);
 const termoBusca = ref("");
 const linhaSelecionadaId = ref(null);
-
 const abaAtiva = ref("identificar");
+const salvando = ref(false);
+
+// ── Formulário (Identificar) ───────────────────────────────────────────
 const form = ref({
   nome: "",
   nome_curto: "",
@@ -21,40 +25,73 @@ const form = ref({
   sem_numero: false,
   data_documento: "",
 });
-const salvando = ref(false);
+const formOriginal = ref({});
 
+// ── Classificar ────────────────────────────────────────────────────────
+const categorias = ref([]);
+const categoriasSelecionadas = ref(new Set());
+const categoriasSelecionadasOriginal = ref(new Set());
+const termoBuscaCategoria = ref("");
+const filtroTipo = ref("todos");
+
+const tipoOpcoes = [
+  { value: "todos",   label: "Todos"   },
+  { value: "entrada", label: "Entrada" },
+  { value: "saida",   label: "Saída"   },
+  { value: "neutro",  label: "Neutro"  },
+];
+
+const categoriasFiltradas = computed(() => {
+  let lista = categorias.value;
+  if (filtroTipo.value !== "todos") lista = lista.filter(c => c.tipo === filtroTipo.value);
+  if (termoBuscaCategoria.value.trim()) {
+    const q = termoBuscaCategoria.value.trim().toLowerCase();
+    lista = lista.filter(c => c.nome.toLowerCase().includes(q));
+  }
+  return lista;
+});
+
+// ── Dirty (computed) ───────────────────────────────────────────────────
+const dirty = computed(() => {
+  if (!linhaSelecionadaId.value) return false;
+  const f = form.value, fo = formOriginal.value;
+  const formDirty =
+    (f.nome_curto       ?? "") !== (fo.nome_curto       ?? "") ||
+    (f.descricao        ?? "") !== (fo.descricao        ?? "") ||
+    (f.numero_documento ?? "") !== (fo.numero_documento ?? "") ||
+    !!f.sem_numero              !== !!fo.sem_numero              ||
+    (f.data_documento   ?? "") !== (fo.data_documento   ?? "");
+  const cur = categoriasSelecionadas.value, ori = categoriasSelecionadasOriginal.value;
+  const catDirty = cur.size !== ori.size || [...cur].some(id => !ori.has(id));
+  return formDirty || catDirty;
+});
+
+// ── Mesclar ────────────────────────────────────────────────────────────
+const modoMesclar         = ref(false);
+const selecionadosMesclar = ref([]);
+const confirmandoMesclar  = ref(false);
+const nomeMesclado        = ref("");
+const mesclando           = ref(false);
+const toastMesclar        = ref(null);
+let   toastTimer          = null;
+
+// ── Computed gerais ────────────────────────────────────────────────────
 const totalInbox = computed(() =>
   comprovantes.value.filter((c) => c.status === "inbox").length
 );
 
+const linhaAtual = computed(() =>
+  comprovantes.value.find(c => c.id === linhaSelecionadaId.value) ?? null
+);
+
+// ── DB ─────────────────────────────────────────────────────────────────
 let db = null;
 async function getDb() {
   if (!db) db = await Database.load("sqlite:mina.db");
   return db;
 }
 
-async function carregarComprovantes() {
-  try {
-    const banco = await getDb();
-    const filtroSql = toolbar.filtro === "todos"
-      ? ""
-      : `AND c.status = '${toolbar.filtro === "inbox" ? "inbox" : "disponivel"}'`;
-
-    comprovantes.value = await banco.select(`
-      SELECT c.id, c.nome, c.nome_curto, c.descricao, c.numero_documento,
-             c.data_documento, c.status, c.caminho_arquivo,
-             COUNT(cc.categoria_id) as total_categorias
-      FROM comprovante c
-      LEFT JOIN comprovante_categoria cc ON cc.comprovante_id = c.id
-      WHERE c.deletado_em IS NULL ${filtroSql}
-      GROUP BY c.id
-      ORDER BY c.data_documento DESC NULLS LAST, c.id DESC
-    `);
-  } catch (err) {
-    console.error("Erro ao carregar comprovantes:", err);
-  }
-}
-
+// ── Helpers ────────────────────────────────────────────────────────────
 function isoParaBr(iso) {
   if (!iso) return "";
   const [a, m, d] = iso.split("-");
@@ -69,33 +106,27 @@ function brParaIso(br) {
   return `${a}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
 }
 
-async function carregarDetalhe(id) {
-  if (!id) return;
-  const banco = await getDb();
-  const rows = await banco.select(
-    `SELECT nome, nome_curto, descricao, numero_documento, data_documento
-     FROM comprovante WHERE id = $1`,
-    [id]
-  );
-  if (rows[0]) {
-    const r = rows[0];
-    Object.assign(form.value, {
-      nome: r.nome ?? "",
-      nome_curto: r.nome_curto ?? "",
-      descricao: r.descricao ?? "",
-      numero_documento: r.numero_documento ?? "",
-      sem_numero: false,
-      data_documento: isoParaBr(r.data_documento),
-    });
-  }
+function formatarData(iso) {
+  if (!iso) return "";
+  const [a, m, d] = iso.split("-");
+  return `${d}/${m}/${a}`;
 }
 
-// Preview do nome normalizado em tempo real
+function onDataInput(e) {
+  let v = e.target.value.replace(/\D/g, "");
+  if (v.length > 2) v = v.slice(0, 2) + "/" + v.slice(2);
+  if (v.length > 5) v = v.slice(0, 5) + "/" + v.slice(5);
+  if (v.length > 10) v = v.slice(0, 10);
+  form.value.data_documento = v;
+}
+
+function onSemNumero() {
+  if (form.value.sem_numero) form.value.numero_documento = "";
+}
+
 const nomeNormalizado = computed(() => {
   const ext = (form.value.nome ?? "").includes(".")
-    ? form.value.nome.split(".").pop()
-    : "";
-
+    ? form.value.nome.split(".").pop() : "";
   let num;
   if (form.value.sem_numero) {
     num = "S????????";
@@ -103,77 +134,173 @@ const nomeNormalizado = computed(() => {
     const n = (form.value.numero_documento ?? "").trim();
     num = n ? n.padStart(9, "0").slice(0, 9) : "_________";
   }
-
   const nomeC = (form.value.nome_curto ?? "").trim().replace(/\s+/g, "-") || "_______";
   return `${num}_${nomeC}${ext ? "." + ext : ""}`;
 });
 
-function onSemNumero() {
-  if (form.value.sem_numero) {
-    form.value.numero_documento = "";
+function nomeExibicao(c) {
+  const ext = c.nome?.includes(".") ? c.nome.split(".").pop() : "";
+  const num = c.numero_documento || "";
+  const nome = (c.nome_curto || "").replace(/\s+/g, "-");
+  if (num && nome) return `${num}_${nome}${ext ? "." + ext : ""}`;
+  if (num) return `${num}${ext ? "." + ext : ""}`;
+  if (nome) return `${nome}${ext ? "." + ext : ""}`;
+  return c.nome || "";
+}
+
+function identificarCompleto(c) {
+  return !!(c.nome_curto && c.numero_documento && c.descricao && c.data_documento);
+}
+
+// ── Carregar ────────────────────────────────────────────────────────────
+async function carregarComprovantes() {
+  try {
+    const banco = await getDb();
+    const filtroSql = toolbar.filtro === "todos"
+      ? ""
+      : `AND c.status = '${toolbar.filtro === "inbox" ? "inbox" : "disponivel"}'`;
+    comprovantes.value = await banco.select(`
+      SELECT c.id, c.nome, c.nome_curto, c.descricao, c.numero_documento,
+             c.data_documento, c.status, c.caminho_arquivo,
+             COUNT(DISTINCT cc.categoria_id) AS total_categorias,
+             COUNT(DISTINCT o.id) AS total_mesclados
+      FROM comprovante c
+      LEFT JOIN comprovante_categoria cc ON cc.comprovante_id = c.id
+      LEFT JOIN comprovante o ON o.mesclado_em_id = c.id AND o.deletado_em IS NULL
+      WHERE c.deletado_em IS NULL
+        AND c.mesclado_em IS NULL
+        ${filtroSql}
+      GROUP BY c.id
+      ORDER BY c.data_documento DESC NULLS LAST, c.id DESC
+    `);
+  } catch (err) {
+    console.error("Erro ao carregar comprovantes:", err);
   }
 }
 
+async function carregarDetalhe(id) {
+  if (!id) return;
+  const banco = await getDb();
+  const rows = await banco.select(
+    `SELECT nome, nome_curto, descricao, numero_documento, data_documento FROM comprovante WHERE id = $1`,
+    [id]
+  );
+  if (rows[0]) {
+    const r = rows[0];
+    const snap = {
+      nome:             r.nome             ?? "",
+      nome_curto:       r.nome_curto       ?? "",
+      descricao:        r.descricao        ?? "",
+      numero_documento: r.numero_documento ?? "",
+      sem_numero:       false,
+      data_documento:   isoParaBr(r.data_documento),
+    };
+    form.value         = { ...snap };
+    formOriginal.value = { ...snap };
+  }
+}
+
+async function carregarCategoriasComprovante(id) {
+  const banco = await getDb();
+  const rows  = await banco.select(
+    "SELECT categoria_id FROM comprovante_categoria WHERE comprovante_id = $1",
+    [id]
+  );
+  const s = new Set(rows.map(r => r.categoria_id));
+  categoriasSelecionadas.value         = s;
+  categoriasSelecionadasOriginal.value = new Set(s);
+}
+
+async function carregarCategorias() {
+  const banco = await getDb();
+  const rows  = await banco.select(`
+    SELECT id, nome, tipo FROM categoria
+    WHERE ativa = 1 AND deletado_em IS NULL
+      AND nome NOT IN ('Aporte Período', 'Aporte Realizado')
+    ORDER BY tipo, nome
+  `);
+  categorias.value = rows;
+}
+
+// ── Selecionar linha ────────────────────────────────────────────────────
+function selecionarLinha(c) {
+  if (modoMesclar.value) { toggleMesclar(c); return; }
+  if (dirty.value) {
+    const ok = confirm("Há alterações não salvas. Descartar e continuar?");
+    if (!ok) return;
+  }
+  linhaSelecionadaId.value = c.id;
+  Promise.all([carregarDetalhe(c.id), carregarCategoriasComprovante(c.id)]);
+}
+
+// ── Toggle categoria ────────────────────────────────────────────────────
+function toggleCategoria(catId) {
+  const s = new Set(categoriasSelecionadas.value);
+  if (s.has(catId)) s.delete(catId); else s.add(catId);
+  categoriasSelecionadas.value = s;
+}
+
+// ── Número sequencial ────────────────────────────────────────────────────
 async function gerarNumeroSequencial(banco) {
-  const rows = await banco.select("SELECT proximo FROM seq_documento WHERE id = 1");
+  const rows   = await banco.select("SELECT proximo FROM seq_documento WHERE id = 1");
   const proximo = rows[0]?.proximo ?? 1;
   await banco.execute("UPDATE seq_documento SET proximo = proximo + 1 WHERE id = 1");
   return "S" + String(proximo).padStart(8, "0");
 }
 
-async function salvarIdentificacao() {
-  if (!linhaSelecionadaId.value) return;
+// ── Salvar unificado ────────────────────────────────────────────────────
+async function salvar() {
+  if (!linhaSelecionadaId.value || salvando.value) return;
   salvando.value = true;
   try {
     const banco = await getDb();
+    const id    = linhaSelecionadaId.value;
 
     let numero = form.value.numero_documento.trim();
-
     if (form.value.sem_numero) {
       numero = await gerarNumeroSequencial(banco);
       form.value.numero_documento = numero;
-      form.value.sem_numero = false;
+      form.value.sem_numero       = false;
     } else if (numero) {
       numero = numero.padStart(9, "0").slice(0, 9);
       form.value.numero_documento = numero;
     }
 
     await banco.execute(
-      `UPDATE comprovante
-         SET nome_curto = $1, descricao = $2, numero_documento = $3,
-             data_documento = $4
-       WHERE id = $5`,
-      [
-        form.value.nome_curto || null,
-        form.value.descricao || null,
-        numero || null,
-        brParaIso(form.value.data_documento) || null,
-        linhaSelecionadaId.value,
-      ]
+      `UPDATE comprovante SET nome_curto = $1, descricao = $2, numero_documento = $3, data_documento = $4 WHERE id = $5`,
+      [form.value.nome_curto || null, form.value.descricao || null, numero || null, brParaIso(form.value.data_documento) || null, id]
     );
+
+    await banco.execute("DELETE FROM comprovante_categoria WHERE comprovante_id = $1", [id]);
+    for (const catId of categoriasSelecionadas.value) {
+      await banco.execute(
+        "INSERT INTO comprovante_categoria (comprovante_id, categoria_id) VALUES ($1, $2)",
+        [id, catId]
+      );
+    }
+
+    formOriginal.value               = { ...form.value };
+    categoriasSelecionadasOriginal.value = new Set(categoriasSelecionadas.value);
     await carregarComprovantes();
+  } catch (err) {
+    alert("Erro ao salvar:\n" + err);
   } finally {
     salvando.value = false;
   }
 }
 
+// ── Outras ações ────────────────────────────────────────────────────────
 async function arquivarLinha(id, event) {
   event.stopPropagation();
   const banco = await getDb();
-  await banco.execute(
-    "UPDATE comprovante SET status = 'disponivel' WHERE id = $1",
-    [id]
-  );
+  await banco.execute("UPDATE comprovante SET status = 'disponivel' WHERE id = $1", [id]);
   await carregarComprovantes();
 }
 
 async function excluirLinha(id, event) {
   event.stopPropagation();
   const banco = await getDb();
-  await banco.execute(
-    "UPDATE comprovante SET deletado_em = datetime('now') WHERE id = $1",
-    [id]
-  );
+  await banco.execute("UPDATE comprovante SET deletado_em = datetime('now') WHERE id = $1", [id]);
   if (linhaSelecionadaId.value === id) linhaSelecionadaId.value = null;
   await carregarComprovantes();
 }
@@ -199,59 +326,20 @@ const compovantesFiltrados = computed(() => {
   );
 });
 
-function formatarData(iso) {
-  if (!iso) return "";
-  const [a, m, d] = iso.split("-");
-  return `${d}/${m}/${a}`;
-}
-
-function onDataInput(e) {
-  let v = e.target.value.replace(/\D/g, "");
-  if (v.length > 2) v = v.slice(0, 2) + "/" + v.slice(2);
-  if (v.length > 5) v = v.slice(0, 5) + "/" + v.slice(5);
-  if (v.length > 10) v = v.slice(0, 10);
-  form.value.data_documento = v;
-}
-
-function nomeExibicao(c) {
-  const ext = c.nome?.includes(".") ? c.nome.split(".").pop() : "";
-  const num = c.numero_documento || "";
-  const nome = (c.nome_curto || "").replace(/\s+/g, "-");
-  if (num && nome) return `${num}_${nome}${ext ? "." + ext : ""}`;
-  if (num) return `${num}${ext ? "." + ext : ""}`;
-  if (nome) return `${nome}${ext ? "." + ext : ""}`;
-  return c.nome || "";
-}
-
-function identificarCompleto(c) {
-  return !!(c.nome_curto && c.numero_documento && c.descricao && c.data_documento);
-}
-
-function selecionarLinha(c) {
-  linhaSelecionadaId.value = c.id;
-  carregarDetalhe(c.id);
-}
-
+// ── Teclado ─────────────────────────────────────────────────────────────
 function handleTeclado(e) {
   const tag = document.activeElement?.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA") return;
-
   const lista = compovantesFiltrados.value;
   if (!lista.length) return;
-
   if (e.key === "ArrowDown" || e.key === "ArrowUp") {
     e.preventDefault();
     const idx = lista.findIndex((c) => c.id === linhaSelecionadaId.value);
     let novo;
-    if (e.key === "ArrowDown") {
-      if (idx >= lista.length - 1) return;
-      novo = lista[idx + 1];
-    } else {
-      if (idx <= 0) return;
-      novo = lista[idx - 1];
-    }
+    if (e.key === "ArrowDown") { if (idx >= lista.length - 1) return; novo = lista[idx + 1]; }
+    else { if (idx <= 0) return; novo = lista[idx - 1]; }
     linhaSelecionadaId.value = novo.id;
-    carregarDetalhe(novo.id);
+    Promise.all([carregarDetalhe(novo.id), carregarCategoriasComprovante(novo.id)]);
     const el = document.querySelector(`[data-id="${novo.id}"]`);
     el?.scrollIntoView({ block: "nearest" });
   }
@@ -261,6 +349,116 @@ function alternarSidePanel() {
   sidePanelAberto.value = !sidePanelAberto.value;
 }
 
+// ── Mesclar ─────────────────────────────────────────────────────────────
+function iniciarMesclar() {
+  modoMesclar.value         = true;
+  selecionadosMesclar.value = [];
+  confirmandoMesclar.value  = false;
+  nomeMesclado.value        = "";
+}
+
+function cancelarMesclar() {
+  modoMesclar.value         = false;
+  selecionadosMesclar.value = [];
+  confirmandoMesclar.value  = false;
+  nomeMesclado.value        = "";
+}
+
+function toggleMesclar(c) {
+  if (!c.caminho_arquivo) return;
+  const idx = selecionadosMesclar.value.findIndex(s => s.id === c.id);
+  if (idx >= 0) selecionadosMesclar.value.splice(idx, 1);
+  else selecionadosMesclar.value.push({ id: c.id, caminho_arquivo: c.caminho_arquivo, nomeDisplay: nomeExibicao(c) });
+}
+
+function ordemMesclar(c) {
+  const idx = selecionadosMesclar.value.findIndex(s => s.id === c.id);
+  return idx >= 0 ? idx + 1 : 0;
+}
+
+function moverMesclar(idx, dir) {
+  const arr = selecionadosMesclar.value;
+  const novo = idx + dir;
+  if (novo < 0 || novo >= arr.length) return;
+  const tmp = arr[idx]; arr[idx] = arr[novo]; arr[novo] = tmp;
+}
+
+function removerMesclar(idx) {
+  selecionadosMesclar.value.splice(idx, 1);
+}
+
+async function executarMesclar() {
+  if (selecionadosMesclar.value.length < 2 || mesclando.value) return;
+  mesclando.value = true;
+  try {
+    const banco    = await getDb();
+    const itens    = selecionadosMesclar.value;
+    const caminhos = itens.map(i => i.caminho_arquivo);
+    const primeiro = caminhos[0];
+    const pasta    = primeiro.substring(0, primeiro.lastIndexOf("/") + 1);
+    const nomeBase = (nomeMesclado.value.trim() || "mesclado").replace(/\.pdf$/i, "");
+    const destino  = pasta + nomeBase + ".pdf";
+
+    await invoke("mesclar_pdfs", { caminhos, destino });
+
+    await banco.execute(
+      "INSERT INTO comprovante (nome, caminho_arquivo, status) VALUES ($1, $2, 'inbox')",
+      [nomeBase + ".pdf", destino]
+    );
+    const seqRows  = await banco.select("SELECT last_insert_rowid() AS id");
+    const novoId   = seqRows[0].id;
+
+    const idsOriginais = itens.map(i => i.id);
+    for (const id of idsOriginais) {
+      await banco.execute(
+        "UPDATE comprovante SET mesclado_em = datetime('now'), mesclado_em_id = $1 WHERE id = $2",
+        [novoId, id]
+      );
+    }
+
+    cancelarMesclar();
+    await carregarComprovantes();
+    linhaSelecionadaId.value = novoId;
+    await Promise.all([carregarDetalhe(novoId), carregarCategoriasComprovante(novoId)]);
+    mostrarToastMesclar(idsOriginais, novoId);
+  } catch (err) {
+    alert("Erro ao mesclar:\n" + err);
+  } finally {
+    mesclando.value = false;
+  }
+}
+
+function mostrarToastMesclar(idsOriginais, idResultado) {
+  if (toastTimer) clearTimeout(toastTimer);
+  toastMesclar.value = { idsOriginais, idResultado };
+  toastTimer = setTimeout(() => { toastMesclar.value = null; }, 8000);
+}
+
+async function desfazerMesclar(idsOriginais, idResultado) {
+  if (toastTimer) clearTimeout(toastTimer);
+  toastMesclar.value = null;
+  try {
+    const banco = await getDb();
+    for (const id of idsOriginais) {
+      await banco.execute("UPDATE comprovante SET mesclado_em = NULL, mesclado_em_id = NULL WHERE id = $1", [id]);
+    }
+    await banco.execute("UPDATE comprovante SET deletado_em = datetime('now') WHERE id = $1", [idResultado]);
+    if (linhaSelecionadaId.value === idResultado) linhaSelecionadaId.value = null;
+    await carregarComprovantes();
+  } catch (err) {
+    alert("Erro ao desfazer:\n" + err);
+  }
+}
+
+async function desfazerMesclarTardio(idResultado) {
+  const ok = confirm("Desfazer mesclagem? Os originais voltarão à lista.");
+  if (!ok) return;
+  const banco = await getDb();
+  const rows  = await banco.select("SELECT id FROM comprovante WHERE mesclado_em_id = $1 AND deletado_em IS NULL", [idResultado]);
+  await desfazerMesclar(rows.map(r => r.id), idResultado);
+}
+
+// ── Watch / ciclo ────────────────────────────────────────────────────────
 watch(linhaSelecionadaId, (id) => {
   toolbar.exibirAtivo = id !== null;
   if (id === null) toolbar.exibirPdf = false;
@@ -271,6 +469,8 @@ watch(() => toolbar.filtro, () => {
   carregarComprovantes();
 });
 
+let unlistenNovo = null;
+
 onMounted(async () => {
   toolbar.ativarComprovantes({
     importar: () => console.log("importar"),
@@ -278,13 +478,26 @@ onMounted(async () => {
     exibir: exibirArquivo,
   });
   toolbar.exibirAtivo = false;
-  await carregarComprovantes();
+  await Promise.all([carregarComprovantes(), carregarCategorias()]);
   document.addEventListener("keydown", handleTeclado);
+
+  unlistenNovo = await listen("comprovante:novo", async (event) => {
+    const caminho = event.payload;
+    const banco   = await getDb();
+    const exist   = await banco.select("SELECT id FROM comprovante WHERE caminho_arquivo = $1", [caminho]);
+    if (exist.length === 0) {
+      const nome = caminho.split("/").pop() || caminho;
+      await banco.execute("INSERT INTO comprovante (nome, caminho_arquivo, status) VALUES ($1, $2, 'inbox')", [nome, caminho]);
+    }
+    await carregarComprovantes();
+  });
 });
 
 onUnmounted(() => {
   toolbar.desativar();
   document.removeEventListener("keydown", handleTeclado);
+  unlistenNovo?.();
+  if (toastTimer) clearTimeout(toastTimer);
 });
 </script>
 
@@ -292,26 +505,25 @@ onUnmounted(() => {
   <div class="main-panel">
     <div class="shell">
       <div class="area-central">
-
-        <!-- Conteúdo principal -->
         <div class="conteudo-principal">
 
           <!-- Painel superior -->
           <div class="painel-superior">
             <div class="busca-wrapper">
               <Search :size="14" class="busca-icone" />
-              <input
-                class="busca"
-                type="text"
-                placeholder="Buscar..."
-                v-model="termoBusca"
-              />
-              <button
-                v-if="termoBusca"
-                class="busca-limpar"
-                @click="termoBusca = ''"
-              >✕</button>
+              <input class="busca" type="text" placeholder="Buscar..." v-model="termoBusca" />
+              <button v-if="termoBusca" class="busca-limpar" @click="termoBusca = ''">✕</button>
             </div>
+
+            <button
+              class="btn-mesclar-toolbar"
+              :class="{ ativo: modoMesclar }"
+              :disabled="modoMesclar"
+              @click="iniciarMesclar"
+            >
+              <Merge :size="13" />
+              Mesclar PDFs
+            </button>
 
             <div
               v-if="totalInbox > 0"
@@ -324,20 +536,16 @@ onUnmounted(() => {
           </div>
 
           <!-- Cabeçalho datagrid -->
-          <div class="datagrid-header">
+          <div class="datagrid-header" :class="{ 'modo-mesclar': modoMesclar }">
             <span class="col-nome">Nome e Descrição</span>
             <span class="col-cat">Cat.</span>
             <span class="col-data">Data</span>
             <span class="col-status">Status</span>
-            <span class="col-acoes">Ações</span>
+            <span v-if="!modoMesclar" class="col-acoes">Ações</span>
           </div>
 
           <!-- Visualizador de PDF -->
-          <iframe
-            v-if="toolbar.exibirPdf && pdfSrc"
-            :src="pdfSrc"
-            class="pdf-viewer"
-          />
+          <iframe v-if="toolbar.exibirPdf && pdfSrc" :src="pdfSrc" class="pdf-viewer" />
           <div v-else-if="toolbar.exibirPdf" class="pdf-sem-arquivo">
             Nenhum arquivo associado a este comprovante.
           </div>
@@ -349,11 +557,18 @@ onUnmounted(() => {
               :key="c.id"
               :data-id="c.id"
               class="linha"
-              :class="{ selecionada: c.id === linhaSelecionadaId, 'em-exibicao': c.id === linhaSelecionadaId && toolbar.exibirPdf }"
+              :class="{
+                selecionada:        !modoMesclar && c.id === linhaSelecionadaId,
+                'em-exibicao':      c.id === linhaSelecionadaId && toolbar.exibirPdf,
+                'mesclar-selecionada': modoMesclar && ordemMesclar(c) > 0,
+                'mesclar-sem-pdf':  modoMesclar && !c.caminho_arquivo,
+              }"
               @click="selecionarLinha(c)"
             >
               <div class="col-nome">
+                <span v-if="modoMesclar && ordemMesclar(c) > 0" class="ordem-badge">{{ ordemMesclar(c) }}</span>
                 <span class="nome-arquivo">{{ nomeExibicao(c) }}</span>
+                <span v-if="c.total_mesclados > 0" class="badge-mesclado" title="Resultado de mesclagem">M</span>
                 <span class="descricao">{{ c.descricao }}</span>
               </div>
               <div class="col-cat">{{ c.total_categorias }}</div>
@@ -363,10 +578,10 @@ onUnmounted(() => {
                   {{ c.status === 'inbox' ? 'Inbox' : 'Disponível' }}
                 </span>
               </div>
-              <div class="col-acoes">
+              <div v-if="!modoMesclar" class="col-acoes">
                 <button class="btn-acao" title="Identificar" @click.stop="selecionarLinha(c); sidePanelAberto = true"><Pencil :size="13" /></button>
-                <button class="btn-acao" v-if="c.status === 'inbox'" title="Disponibilizar" :disabled="!identificarCompleto(c)" :class="{ 'btn-bloqueado': !identificarCompleto(c) }" @click="arquivarLinha(c.id, $event)"><Archive :size="13" /></button>
-                <button class="btn-acao btn-excluir" title="Excluir" @click="excluirLinha(c.id, $event)"><Trash2 :size="13" /></button>
+                <button class="btn-acao" v-if="c.status === 'inbox'" title="Disponibilizar" :disabled="!identificarCompleto(c)" :class="{ 'btn-bloqueado': !identificarCompleto(c) }" @click.stop="arquivarLinha(c.id, $event)"><Archive :size="13" /></button>
+                <button class="btn-acao btn-excluir" title="Excluir" @click.stop="excluirLinha(c.id, $event)"><Trash2 :size="13" /></button>
               </div>
             </div>
 
@@ -376,10 +591,44 @@ onUnmounted(() => {
           </div>
 
           <!-- Painel inferior -->
-          <div class="painel-inferior">
-            <span class="rodape-contador">
-              {{ compovantesFiltrados.length }} documento{{ compovantesFiltrados.length !== 1 ? 's' : '' }}
-            </span>
+          <div class="painel-inferior" :class="{ 'painel-mesclar-ativo': modoMesclar }">
+            <template v-if="!modoMesclar">
+              <span class="rodape-contador">
+                {{ compovantesFiltrados.length }} documento{{ compovantesFiltrados.length !== 1 ? 's' : '' }}
+              </span>
+            </template>
+
+            <template v-else-if="!confirmandoMesclar">
+              <div class="mesclar-chips-area">
+                <span v-if="selecionadosMesclar.length === 0" class="mesclar-hint">
+                  Clique nos arquivos PDF para selecionar a ordem
+                </span>
+                <div v-for="(item, idx) in selecionadosMesclar" :key="item.id" class="chip-mesclar">
+                  <span class="chip-ordem">{{ idx + 1 }}</span>
+                  <span class="chip-nome" :title="item.nomeDisplay">{{ item.nomeDisplay }}</span>
+                  <button class="chip-btn" :disabled="idx === 0" @click.stop="moverMesclar(idx, -1)">↑</button>
+                  <button class="chip-btn" :disabled="idx === selecionadosMesclar.length - 1" @click.stop="moverMesclar(idx, 1)">↓</button>
+                  <button class="chip-btn chip-remove" @click.stop="removerMesclar(idx)">×</button>
+                </div>
+              </div>
+              <div class="mesclar-rodape-acoes">
+                <span class="mesclar-count">{{ selecionadosMesclar.length }} selecionado{{ selecionadosMesclar.length !== 1 ? 's' : '' }}</span>
+                <button class="btn-mesclar-acao btn-secundario" @click="cancelarMesclar">Cancelar</button>
+                <button class="btn-mesclar-acao btn-primario" :disabled="selecionadosMesclar.length < 2" @click="confirmandoMesclar = true">Confirmar →</button>
+              </div>
+            </template>
+
+            <template v-else>
+              <div class="mesclar-nome-area">
+                <label class="mesclar-nome-label">Nome do arquivo:</label>
+                <input v-model="nomeMesclado" type="text" class="mesclar-nome-input" placeholder="mesclado" @keyup.enter="executarMesclar" />
+                <span class="mesclar-nome-dica">.pdf</span>
+              </div>
+              <div class="mesclar-rodape-acoes">
+                <button class="btn-mesclar-acao btn-secundario" @click="confirmandoMesclar = false">← Voltar</button>
+                <button class="btn-mesclar-acao btn-primario" :disabled="mesclando" @click="executarMesclar">{{ mesclando ? 'Mesclando…' : 'Mesclar' }}</button>
+              </div>
+            </template>
           </div>
 
         </div>
@@ -388,11 +637,8 @@ onUnmounted(() => {
         <div class="side-panel" :class="{ aberto: sidePanelAberto }">
           <div class="side-panel-cabecalho">
             <div v-if="sidePanelAberto" class="abas">
-              <button
-                class="aba"
-                :class="{ ativa: abaAtiva === 'identificar' }"
-                @click="abaAtiva = 'identificar'"
-              >Identificar</button>
+              <button class="aba" :class="{ ativa: abaAtiva === 'identificar' }" @click="abaAtiva = 'identificar'">Identificar</button>
+              <button class="aba" :class="{ ativa: abaAtiva === 'classificar' }" @click="abaAtiva = 'classificar'">Classificar</button>
             </div>
             <button class="btn-toggle-panel" @click="alternarSidePanel">
               <PanelRightClose v-if="sidePanelAberto" :size="16" />
@@ -402,78 +648,105 @@ onUnmounted(() => {
 
           <div v-if="sidePanelAberto" class="side-panel-corpo">
 
+            <!-- Aba Identificar -->
             <template v-if="abaAtiva === 'identificar'">
               <div v-if="!linhaSelecionadaId" class="painel-vazio">
                 Selecione um comprovante na lista.
               </div>
               <div v-else class="form-identificar">
 
-                <!-- Nome do arquivo (read-only) -->
+                <div v-if="linhaAtual?.total_mesclados > 0" class="aviso-mesclado">
+                  <Merge :size="12" />
+                  Resultado de mesclagem ({{ linhaAtual.total_mesclados }} originais)
+                  <button class="btn-link-danger" @click="desfazerMesclarTardio(linhaSelecionadaId)">Desfazer</button>
+                </div>
+
                 <div class="campo">
                   <label>Nome do arquivo</label>
                   <div class="campo-readonly">{{ form.nome || '—' }}</div>
                 </div>
 
-                <!-- Número do documento -->
                 <div class="campo">
                   <label>Número do documento</label>
-                  <input
-                    v-model="form.numero_documento"
-                    type="text"
-                    :disabled="form.sem_numero"
-                    placeholder="Ex: NF-001"
-                    :class="{ desabilitado: form.sem_numero }"
-                  />
+                  <input v-model="form.numero_documento" type="text" :disabled="form.sem_numero" placeholder="Ex: NF-001" :class="{ desabilitado: form.sem_numero }" />
                   <label class="checkbox-label">
-                    <input
-                      type="checkbox"
-                      v-model="form.sem_numero"
-                      @change="onSemNumero"
-                    />
+                    <input type="checkbox" v-model="form.sem_numero" @change="onSemNumero" />
                     Documento sem número
                   </label>
                 </div>
 
-                <!-- Descrição -->
                 <div class="campo">
                   <label>Descrição <span class="obrigatorio">*</span></label>
                   <textarea v-model="form.descricao" rows="3" placeholder="Descrição do documento…" />
                 </div>
 
-                <!-- Data da Transação -->
                 <div class="campo">
                   <label>Data da Transação <span class="obrigatorio">*</span></label>
                   <input v-model="form.data_documento" type="text" placeholder="DD/MM/AAAA" @input="onDataInput" />
                 </div>
 
-                <!-- Nome curto -->
                 <div class="campo">
                   <label>Nome curto <span class="obrigatorio">*</span></label>
                   <input v-model="form.nome_curto" type="text" placeholder="Ex: Aluguel Joao" />
                 </div>
 
-                <!-- Preview do nome normalizado -->
                 <div class="campo">
                   <label>Nome normalizado</label>
                   <div class="campo-preview" :title="nomeNormalizado">{{ nomeNormalizado }}</div>
                 </div>
 
-                <button class="btn-salvar" :disabled="salvando" @click="salvarIdentificacao">
-                  {{ salvando ? "Salvando…" : "Salvar" }}
-                </button>
+              </div>
+            </template>
 
+            <!-- Aba Classificar -->
+            <template v-if="abaAtiva === 'classificar'">
+              <div v-if="!linhaSelecionadaId" class="painel-vazio">
+                Selecione um comprovante na lista.
+              </div>
+              <div v-else class="form-classificar">
+                <div class="classificar-toolbar">
+                  <input v-model="termoBuscaCategoria" type="text" placeholder="Filtrar categorias…" class="input-cat" />
+                  <div class="filtro-tipo">
+                    <button v-for="o in tipoOpcoes" :key="o.value" class="btn-tipo" :class="{ ativo: filtroTipo === o.value }" @click="filtroTipo = o.value">{{ o.label }}</button>
+                  </div>
+                </div>
+                <div class="cat-lista">
+                  <div v-if="categoriasFiltradas.length === 0" class="cat-vazio">Nenhuma categoria.</div>
+                  <label v-for="cat in categoriasFiltradas" :key="cat.id" class="cat-item">
+                    <input type="checkbox" :checked="categoriasSelecionadas.has(cat.id)" @change="toggleCategoria(cat.id)" />
+                    <span class="cat-tipo-badge" :class="'cat-' + cat.tipo">{{ cat.tipo[0].toUpperCase() }}</span>
+                    <span class="cat-nome">{{ cat.nome }}</span>
+                  </label>
+                </div>
               </div>
             </template>
 
           </div>
-        </div>
 
+          <!-- Footer salvar -->
+          <div v-if="sidePanelAberto && linhaSelecionadaId" class="side-panel-footer">
+            <span v-if="dirty" class="footer-dirty">● Não salvo</span>
+            <button class="btn-salvar" :disabled="salvando || !dirty" @click="salvar">
+              {{ salvando ? 'Salvando…' : 'Salvar' }}
+            </button>
+          </div>
+
+        </div>
       </div>
     </div>
   </div>
+
+  <!-- Toast mesclar -->
+  <Teleport to="body">
+    <div v-if="toastMesclar" class="toast-mesclar">
+      <span>Mesclagem concluída.</span>
+      <button class="toast-desfazer" @click="desfazerMesclar(toastMesclar.idsOriginais, toastMesclar.idResultado)">Desfazer</button>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
+/* ── Layout original preservado ──────────────────────────────────────── */
 .main-panel {
   height: 100%;
   padding: 12px;
@@ -528,10 +801,7 @@ onUnmounted(() => {
   max-width: 520px;
 }
 
-.busca-icone {
-  color: var(--cor-texto-fraco);
-  flex-shrink: 0;
-}
+.busca-icone { color: var(--cor-texto-fraco); flex-shrink: 0; }
 
 .busca {
   flex: 1;
@@ -543,9 +813,7 @@ onUnmounted(() => {
   font-family: inherit;
 }
 
-.busca::placeholder {
-  color: var(--cor-texto-fraco);
-}
+.busca::placeholder { color: var(--cor-texto-fraco); }
 
 .busca-limpar {
   background: none;
@@ -555,10 +823,26 @@ onUnmounted(() => {
   font-size: 12px;
   padding: 0;
 }
+.busca-limpar:hover { color: #cc4444; }
 
-.busca-limpar:hover {
-  color: #cc4444;
+/* Botão Mesclar na toolbar */
+.btn-mesclar-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--cor-borda);
+  border-radius: 4px;
+  background: none;
+  color: var(--cor-texto-fraco);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  transition: background-color 0.1s, color 0.1s;
 }
+.btn-mesclar-toolbar:hover:not(:disabled) { color: var(--cor-texto-forte); background-color: var(--cor-menu-hover); }
+.btn-mesclar-toolbar:disabled { opacity: 0.4; cursor: default; }
+.btn-mesclar-toolbar.ativo { color: #4a9eff; border-color: #4a9eff; }
 
 /* Sininho */
 .sininho-wrapper {
@@ -569,11 +853,7 @@ onUnmounted(() => {
   cursor: default;
   margin-left: auto;
 }
-
-.sininho-icone {
-  color: var(--cor-texto-fraco);
-}
-
+.sininho-icone { color: var(--cor-texto-fraco); }
 .sininho-badge {
   position: absolute;
   top: -6px;
@@ -601,6 +881,11 @@ onUnmounted(() => {
   padding: 0 16px 0 10px;
 }
 
+.datagrid-header.modo-mesclar,
+.modo-mesclar.linha {
+  grid-template-columns: 1fr 60px 100px 110px;
+}
+
 .datagrid-header {
   padding: 6px 10px;
   border-bottom: 1px solid var(--cor-borda);
@@ -612,12 +897,7 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.pdf-viewer {
-  flex: 1;
-  border: none;
-  background: #111;
-}
-
+.pdf-viewer { flex: 1; border: none; background: #111; }
 .pdf-sem-arquivo {
   flex: 1;
   display: flex;
@@ -627,10 +907,7 @@ onUnmounted(() => {
   font-size: 13px;
 }
 
-.datagrid-body {
-  flex: 1;
-  overflow-y: auto;
-}
+.datagrid-body { flex: 1; overflow-y: auto; }
 
 .linha {
   min-height: 44px;
@@ -638,22 +915,19 @@ onUnmounted(() => {
   cursor: pointer;
   transition: background-color 0.1s;
 }
+.linha:hover { background-color: var(--cor-menu-hover); }
+.linha.selecionada { background-color: #1a3a5a; }
+.linha.selecionada:hover { background-color: #1e4268; }
+.linha.em-exibicao { background-color: #0f2a40; border-left: 2px solid #4a9eff; }
+.linha.mesclar-selecionada { background-color: #1a3a1a; border-left: 2px solid #4a7a4a; }
+.linha.mesclar-sem-pdf { opacity: 0.35; cursor: not-allowed; }
 
-.linha:hover {
-  background-color: var(--cor-menu-hover);
-}
-
-.linha.selecionada {
-  background-color: #1a3a5a;
-}
-
-.linha.selecionada:hover {
-  background-color: #1e4268;
-}
-
-.linha.em-exibicao {
-  background-color: #0f2a40;
-  border-left: 2px solid #4a9eff;
+.col-nome {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  min-width: 0;
 }
 
 .nome-arquivo {
@@ -663,6 +937,8 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .descricao {
@@ -674,10 +950,31 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
-.col-cat,
-.col-data,
-.col-status,
-.col-acoes {
+.ordem-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: #4a7a4a;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.badge-mesclado {
+  font-size: 9px;
+  font-weight: 700;
+  background: #1a3a5a;
+  color: #4a9eff;
+  border-radius: 3px;
+  padding: 0 3px;
+  flex-shrink: 0;
+}
+
+.col-cat, .col-data, .col-status, .col-acoes {
   font-size: 12px;
   color: var(--cor-texto);
 }
@@ -699,19 +996,9 @@ onUnmounted(() => {
   align-items: center;
   opacity: 0.6;
 }
-
-.btn-acao:hover {
-  opacity: 1;
-}
-
-.btn-excluir:hover {
-  color: #cc4444;
-}
-
-.btn-bloqueado {
-  opacity: 0.2 !important;
-  cursor: not-allowed !important;
-}
+.btn-acao:hover { opacity: 1; }
+.btn-excluir:hover { color: #cc4444; }
+.btn-bloqueado { opacity: 0.2 !important; cursor: not-allowed !important; }
 
 .badge {
   font-size: 10px;
@@ -721,30 +1008,144 @@ onUnmounted(() => {
   letter-spacing: 0.5px;
   white-space: nowrap;
 }
-
-.badge.inbox {
-  background-color: #2a2a1a;
-  color: #ccaa44;
-}
-
-.badge.disponivel {
-  background-color: #1a3a5a;
-  color: #4a9eff;
-}
+.badge.inbox     { background-color: #2a2a1a; color: #ccaa44; }
+.badge.disponivel { background-color: #1a3a5a; color: #4a9eff; }
 
 /* Painel inferior */
 .painel-inferior {
   flex-shrink: 0;
-  height: 32px;
+  min-height: 32px;
   border-top: 1px solid var(--cor-borda);
   display: flex;
   align-items: center;
   padding: 0 12px;
+  gap: 8px;
 }
 
-.rodape-contador {
-  font-size: 12px;
+.rodape-contador { font-size: 12px; color: var(--cor-texto-fraco); }
+
+/* Modo mesclar — painel inferior */
+.painel-mesclar-ativo {
+  background-color: #111f11;
+  border-top-color: #4a7a4a;
+  min-height: 44px;
+  flex-wrap: nowrap;
+  padding: 6px 12px;
+}
+
+.mesclar-chips-area {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  overflow-x: auto;
+}
+
+.mesclar-hint {
   color: var(--cor-texto-fraco);
+  font-style: italic;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.chip-mesclar {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: #1a2a1a;
+  border: 1px solid #4a7a4a;
+  border-radius: 12px;
+  padding: 2px 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+.chip-ordem {
+  background: #4a7a4a;
+  color: #fff;
+  border-radius: 50%;
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.chip-nome {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--cor-texto);
+}
+
+.chip-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--cor-texto-fraco);
+  padding: 0 1px;
+  font-size: 11px;
+  line-height: 1;
+}
+.chip-btn:disabled { opacity: 0.3; cursor: default; }
+.chip-btn.chip-remove { color: #cc4444; font-size: 13px; }
+
+.mesclar-rodape-acoes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.mesclar-count { color: var(--cor-texto-fraco); font-size: 11px; white-space: nowrap; }
+
+.mesclar-nome-area {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+.mesclar-nome-label { color: var(--cor-texto-fraco); white-space: nowrap; font-size: 12px; }
+.mesclar-nome-input {
+  flex: 1;
+  padding: 4px 6px;
+  border: 1px solid var(--cor-borda);
+  border-radius: 4px;
+  background: #111;
+  color: var(--cor-texto-forte);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  min-width: 80px;
+}
+.mesclar-nome-dica { color: var(--cor-texto-fraco); font-size: 11px; }
+
+.btn-mesclar-acao {
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  border: 1px solid var(--cor-borda);
+}
+.btn-secundario { background: none; color: var(--cor-texto-fraco); }
+.btn-secundario:hover { color: var(--cor-texto-forte); }
+.btn-primario { background: #1a4a7a; color: #fff; border-color: #1a4a7a; font-weight: 600; }
+.btn-primario:hover:not(:disabled) { background: #1e5a94; }
+.btn-primario:disabled { opacity: 0.4; cursor: default; }
+
+/* Estado vazio */
+.estado-vazio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--cor-texto-fraco);
+  font-size: 13px;
 }
 
 /* Side panel */
@@ -757,10 +1158,7 @@ onUnmounted(() => {
   transition: width 0.2s ease;
   overflow: hidden;
 }
-
-.side-panel.aberto {
-  width: 400px;
-}
+.side-panel.aberto { width: 400px; }
 
 .side-panel-cabecalho {
   display: flex;
@@ -783,10 +1181,7 @@ onUnmounted(() => {
   align-items: center;
   flex-shrink: 0;
 }
-
-.btn-toggle-panel:hover {
-  color: var(--cor-texto-forte);
-}
+.btn-toggle-panel:hover { color: var(--cor-texto-forte); }
 
 .side-panel-corpo {
   flex: 1;
@@ -794,23 +1189,8 @@ onUnmounted(() => {
   padding: 12px;
 }
 
-/* Estado vazio */
-.estado-vazio {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: var(--cor-texto-fraco);
-  font-size: 13px;
-}
-
 /* Abas */
-.abas {
-  display: flex;
-  gap: 2px;
-  flex: 1;
-}
-
+.abas { display: flex; gap: 2px; flex: 1; }
 .aba {
   background: none;
   border: none;
@@ -823,11 +1203,7 @@ onUnmounted(() => {
   font-family: inherit;
   white-space: nowrap;
 }
-
-.aba.ativa {
-  color: var(--cor-texto-forte);
-  border-bottom-color: #4a9eff;
-}
+.aba.ativa { color: var(--cor-texto-forte); border-bottom-color: #4a9eff; }
 
 /* Formulário Identificar */
 .painel-vazio {
@@ -840,18 +1216,31 @@ onUnmounted(() => {
   text-align: center;
 }
 
-.form-identificar {
+.form-identificar { display: flex; flex-direction: column; gap: 12px; }
+
+.aviso-mesclado {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  background: #0d1a2a;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #4a9eff;
+  border: 1px solid #1e3a5f;
+}
+.btn-link-danger {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #cc4444;
+  font-size: 11px;
+  text-decoration: underline;
+  padding: 0;
+  margin-left: auto;
 }
 
-.campo {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
+.campo { display: flex; flex-direction: column; gap: 4px; }
 .campo label {
   font-size: 10px;
   font-weight: bold;
@@ -859,11 +1248,7 @@ onUnmounted(() => {
   letter-spacing: 0.5px;
   color: var(--cor-texto-fraco);
 }
-
-.obrigatorio {
-  color: #cc4444;
-  font-size: 11px;
-}
+.obrigatorio { color: #cc4444; font-size: 11px; }
 
 .campo input,
 .campo textarea {
@@ -876,22 +1261,10 @@ onUnmounted(() => {
   padding: 6px 8px;
   outline: none;
 }
+.campo input.desabilitado { opacity: 0.4; cursor: not-allowed; }
+.campo textarea { resize: vertical; }
+.campo input:focus, .campo textarea:focus { border-color: #4a9eff; }
 
-.campo input.desabilitado {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.campo textarea {
-  resize: vertical;
-}
-
-.campo input:focus,
-.campo textarea:focus {
-  border-color: #4a9eff;
-}
-
-/* Campo read-only */
 .campo-readonly {
   background-color: #0e0e0e;
   border: 1px solid #333;
@@ -905,7 +1278,6 @@ onUnmounted(() => {
   font-family: monospace;
 }
 
-/* Preview nome normalizado */
 .campo-preview {
   background-color: #0d1a2a;
   border: 1px solid #1e3a5f;
@@ -919,7 +1291,6 @@ onUnmounted(() => {
   font-family: monospace;
 }
 
-/* Checkbox */
 .checkbox-label {
   display: flex;
   align-items: center;
@@ -932,17 +1303,89 @@ onUnmounted(() => {
   cursor: pointer;
   margin-top: 4px;
 }
+.checkbox-label input[type="checkbox"] { width: auto; padding: 0; border: none; background: none; cursor: pointer; }
 
-.checkbox-label input[type="checkbox"] {
-  width: auto;
-  padding: 0;
-  border: none;
+/* Formulário Classificar */
+.form-classificar { display: flex; flex-direction: column; gap: 8px; }
+
+.classificar-toolbar { display: flex; flex-direction: column; gap: 6px; }
+
+.input-cat {
+  padding: 5px 8px;
+  border: 1px solid var(--cor-borda);
+  border-radius: 4px;
+  background: #111;
+  color: var(--cor-texto-forte);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+.input-cat:focus { border-color: #4a9eff; }
+
+.filtro-tipo { display: flex; gap: 2px; }
+.btn-tipo {
+  flex: 1;
+  padding: 3px 0;
+  border: 1px solid var(--cor-borda);
+  border-radius: 4px;
   background: none;
   cursor: pointer;
+  font-size: 11px;
+  color: var(--cor-texto-fraco);
+  font-family: inherit;
+  transition: background-color 0.1s, color 0.1s;
+}
+.btn-tipo:hover { color: var(--cor-texto-forte); }
+.btn-tipo.ativo { background: #1a4a7a; color: #fff; border-color: #1a4a7a; }
+
+.cat-lista { display: flex; flex-direction: column; gap: 1px; }
+.cat-vazio { font-size: 12px; color: var(--cor-texto-fraco); padding: 8px 0; }
+
+.cat-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--cor-texto);
+}
+.cat-item:hover { background-color: var(--cor-menu-hover); }
+
+.cat-tipo-badge {
+  font-size: 8px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.cat-entrada { background: #1a3a1a; color: #4aaa4a; }
+.cat-saida   { background: #3a1a1a; color: #aa4a4a; }
+.cat-neutro  { background: #2a2a2a; color: #8a8a8a; }
+.cat-nome { flex: 1; }
+
+/* Side panel footer */
+.side-panel-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--cor-borda);
+  flex-shrink: 0;
+  background-color: var(--cor-menu-bg);
+}
+.footer-dirty {
+  font-size: 11px;
+  color: #ccaa44;
+  margin-right: auto;
 }
 
 .btn-salvar {
-  margin-top: 4px;
+  margin-top: 0;
   background-color: #1a4a7a;
   border: none;
   border-radius: 4px;
@@ -951,16 +1394,45 @@ onUnmounted(() => {
   font-family: inherit;
   font-size: 13px;
   font-weight: 600;
-  padding: 8px;
+  padding: 6px 16px;
   transition: background-color 0.15s;
 }
+.btn-salvar:hover:not(:disabled) { background-color: #1e5a94; }
+.btn-salvar:disabled { opacity: 0.4; cursor: default; }
 
-.btn-salvar:hover:not(:disabled) {
-  background-color: #1e5a94;
+/* Toast mesclar */
+.toast-mesclar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 18px;
+  background: #111;
+  color: var(--cor-texto-forte);
+  border: 1px solid var(--cor-borda);
+  border-radius: 8px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  z-index: 9999;
+  white-space: nowrap;
+  animation: slideUp 0.2s ease;
+}
+.toast-desfazer {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #4a9eff;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: underline;
+  padding: 0;
 }
 
-.btn-salvar:disabled {
-  opacity: 0.5;
-  cursor: default;
+@keyframes slideUp {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 </style>
